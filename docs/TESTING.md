@@ -47,11 +47,23 @@ github.com > Settings > Developer settings > Personal access tokens > **Fine-gra
 
 Copy the token (it starts with `github_pat_`).
 
-## 4. Create the Gmail App Password
+## 4. Create an App Password for the sending account (support@)
 
-With the Google account that will **send** the alerts:
-myaccount.google.com > Security > 2-Step Verification (must be on) > **App passwords** > create `security-agent`.
-Copy the 16-character password. If "App passwords" is missing, the Workspace admin has disabled it.
+Alerts are sent **from the company support account**, but during the test they all go **to you**
+(`REDIRECT_EMAILS_TO`). The support account's normal password does **not** work: Google refuses it
+for scripts. You need an App Password, which only works for this kind of sign-in and can be revoked alone.
+
+1. Sign in to myaccount.google.com **as support@** (a private window avoids mixing it with your account).
+2. Security > **2-Step Verification**: turn it on if it is off. Agree with whoever else uses this
+   account which phone or method receives the codes.
+3. Security > **App passwords** (or go to myaccount.google.com/apppasswords) > name it `security-agent` > Create.
+4. Copy the 16-character password. Spaces do not matter. Paste it only into GitHub (step 5): not in a
+   chat, a file or an email. It is shown once; if lost, delete it and create a new one.
+
+If "App passwords" is missing: 2-Step Verification is still off, or the Workspace admin has disabled
+App Passwords (Admin console > Security > Authentication > 2-Step Verification / Less secure apps settings).
+
+Tell whoever reads support@: alerts appear in its **Sent** folder. Replies go to `MAIL_REPLY_TO`, not to support@.
 
 ## 5. Configure the agent's repository
 
@@ -62,14 +74,15 @@ In `security-agent` on GitHub: Settings > Secrets and variables > Actions.
 | Name | Value |
 |---|---|
 | `GITHUB_SCAN_TOKEN` | the fine-grained token |
-| `SMTP_PASS` | the App Password |
+| `SMTP_PASS` | the support@ App Password |
 
 **Variables**
 
 | Name | Value |
 |---|---|
-| `SMTP_USER` | the sending Gmail address |
-| `MAIL_FROM` | the same address |
+| `SMTP_USER` | `support@aitomarketgroup.com` |
+| `MAIL_FROM` | `AITM Security Agent <support@aitomarketgroup.com>` |
+| `MAIL_REPLY_TO` | your email (replies come to you, not to the support inbox) |
 | `SEND_EMAILS` | `true` |
 | `REDIRECT_EMAILS_TO` | your email (safety net: every email comes to you) |
 | `REPOS` | `security-agent-sample-app` |
@@ -109,6 +122,10 @@ Actions tab > **security-scan** > Run workflow, choose the mode.
 **To be validated (2):** `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_GA_MEASUREMENT_ID`.
 `feature/clean` must not add any issue.
 
+If no email arrives, open the run's log: `cannot sign in to smtp.gmail.com ... 535-5.7.8` means the
+password is not an App Password (or was mistyped); `SMTP_USER or SMTP_PASS is not set` means a secret or
+variable name is wrong. Nothing is marked as sent in either case, so the next run retries.
+
 Check in every email: it starts with "[Pilot mode: this email was meant for ...]", "Why you" says
 `.github/CODEOWNERS`, and **no key value appears anywhere**.
 
@@ -119,7 +136,7 @@ Check in every email: it starts with "[Pilot mode: this email was meant for ...]
 3. An org admin creates the GitHub App (Contents: read, Metadata: read), installs it on all repositories,
    and you set `SCAN_APP_CLIENT_ID` (variable) and `SCAN_APP_PRIVATE_KEY` (secret).
 4. Move secrets into an environment `security-scan` restricted to `main`; protect `main`.
-5. Switch the sender to the `security-alerts@` account (`SMTP_USER`, `MAIL_FROM`, `SMTP_PASS`), set
-   `ALLOWED_EMAIL_DOMAINS` and `FALLBACK_EMAIL`.
+5. Keep support@ as the sender (or switch `SMTP_USER`, `MAIL_FROM`, `SMTP_PASS` to a dedicated account),
+   set `ALLOWED_EMAIL_DOMAINS` and `FALLBACK_EMAIL`.
 6. Run **inventory**, review the list with Khushi, update the allowlist.
 7. Keep `REDIRECT_EMAILS_TO` for a few days with all repos, then remove it and set `ENABLE_SCHEDULE=true`.

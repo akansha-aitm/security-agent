@@ -81,8 +81,9 @@ are scanned too, so `git fetch --all` first).
    owned by the organisation, stored as the secret `GITHUB_SCAN_TOKEN`. The App is preferred: it does not
    belong to a person and its tokens last one hour.
 
-3. **Email account.** A dedicated Workspace user (e.g. `security-alerts@`) with 2-Step Verification, then an
-   App Password (check that the Admin console allows App Passwords).
+3. **Email account.** The company `support@` account (a real Workspace user, not a group) with
+   2-Step Verification on, then an App Password for it. The normal password does not work. Alerts show
+   up in support@'s Sent folder; `MAIL_REPLY_TO` sends replies elsewhere.
 
 4. **GitHub environment.** In the agent's repo: Settings > Environments > New `security-scan`,
    deployment branches: `main` only. Add to it:
@@ -92,7 +93,9 @@ are scanned too, so `git fetch --all` first).
    | `SCAN_APP_CLIENT_ID` | variable | the App's Client ID |
    | `SCAN_APP_PRIVATE_KEY` | secret | the App's private key |
    | `SMTP_PASS` | secret | App Password |
-   | `SMTP_USER` / `MAIL_FROM` | variable | `security-alerts@...` |
+   | `SMTP_USER` | variable | `support@aitomarketgroup.com` |
+   | `MAIL_FROM` | variable | `AITM Security Agent <support@aitomarketgroup.com>` |
+   | `MAIL_REPLY_TO` | variable | optional: where replies go, instead of the support inbox |
    | `ALLOWED_EMAIL_DOMAINS` | variable | company domain(s): alerts never go to personal addresses |
    | `FALLBACK_EMAIL` | variable | who gets alerts for repos without an owner |
    | `REDIRECT_EMAILS_TO` | variable | pilot: every email goes to this address, with the intended recipient noted |

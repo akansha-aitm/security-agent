@@ -40,6 +40,7 @@ jobs:
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASS: ${{ secrets.SMTP_PASS }}
       MAIL_FROM: ${{ vars.MAIL_FROM }}
+      MAIL_REPLY_TO: ${{ vars.MAIL_REPLY_TO }}
       SEND_EMAILS: ${{ vars.SEND_EMAILS }}
       REDIRECT_EMAILS_TO: ${{ vars.REDIRECT_EMAILS_TO }}
       FALLBACK_EMAIL: ${{ vars.FALLBACK_EMAIL }}

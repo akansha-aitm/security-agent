@@ -6,11 +6,14 @@ const SECRET_ENV_NAMES = ["GITHUB_SCAN_TOKEN", "GITLAB_TOKEN", "SMTP_PASS"];
 export function scrub(text = "") {
   let out = String(text);
   for (const name of SECRET_ENV_NAMES) {
-    const value = process.env[name];
-    if (!value || value.length < 6) continue;
-    out = out.split(value).join("[redacted]");
-    for (const user of ["oauth2", "x-access-token"])
-      out = out.split(Buffer.from(`${user}:${value}`).toString("base64")).join("[redacted]");
+    const raw = process.env[name];
+    if (!raw || raw.length < 6) continue;
+    // Gmail shows App Passwords in groups of 4 ("abcd efgh ..."): redact both spellings.
+    for (const value of new Set([raw, raw.replace(/\s+/g, "")])) {
+      out = out.split(value).join("[redacted]");
+      for (const user of ["oauth2", "x-access-token"])
+        out = out.split(Buffer.from(`${user}:${value}`).toString("base64")).join("[redacted]");
+    }
   }
   return out;
 }

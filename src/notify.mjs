@@ -93,7 +93,8 @@ function whereText(f) {
   return shown.join(" | ") + (more > 0 ? ` | and ${more} more branch${more === 1 ? "" : "es"}` : "");
 }
 
-/** Sends through Gmail SMTP, or writes the emails to disk in dry-run mode. Returns the delivered emails. */
+/** Sends through Gmail SMTP (MAIL_FROM can carry a display name, MAIL_REPLY_TO keeps replies out of the
+ * sending mailbox), or writes the emails to disk in dry-run mode. Returns the delivered emails. */
 export async function deliver(emails, { dryRun, outDir, redirectTo }) {
   if (!emails.length) return [];
   if (dryRun) {
@@ -105,19 +106,34 @@ export async function deliver(emails, { dryRun, outDir, redirectTo }) {
     log(`dry run: ${emails.length} email(s) written to ${dir}`);
     return emails;
   }
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.replace(/\s+/g, ""); // App Passwords are shown with spaces
+  if (!user || !pass) {
+    warn(`SEND_EMAILS is true but SMTP_USER or SMTP_PASS is not set: ${emails.length} email(s) not sent`);
+    return [];
+  }
   const { default: nodemailer } = await import("nodemailer");
   const transport = nodemailer.createTransport({
     host: process.env.SMTP_HOST ?? "smtp.gmail.com",
     port: Number(process.env.SMTP_PORT ?? 465),
     secure: true,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    auth: { user, pass },
   });
+  try {
+    await transport.verify();
+  } catch (err) {
+    // Usually: the normal account password was used instead of an App Password (535-5.7.8).
+    warn(`cannot sign in to ${process.env.SMTP_HOST ?? "smtp.gmail.com"} as ${user}: ${err.message}. ${emails.length} email(s) not sent`);
+    return [];
+  }
+  const from = process.env.MAIL_FROM || user;
+  const replyTo = process.env.MAIL_REPLY_TO || undefined;
   const sent = [];
   for (const e of emails) {
     const to = redirectTo || e.to;
     const text = redirectTo ? `[Pilot mode: this email was meant for ${e.to}]\n\n${e.text}` : e.text;
     try {
-      await transport.sendMail({ from: process.env.MAIL_FROM ?? process.env.SMTP_USER, to, subject: e.subject, text });
+      await transport.sendMail({ from, replyTo, to, subject: e.subject, text });
       sent.push(e);
     } catch (err) {
       warn(`email to ${to} failed: ${err.message}`);
