@@ -1,0 +1,10 @@
+node_modules/
+.work/
+.state/
+out/
+.env*
+!.env.example
+
+# local only: meeting notes and personal Claude settings
+context/
+.claude/settings.local.json

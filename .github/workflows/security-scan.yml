@@ -1,0 +1,111 @@
+name: security-scan
+
+on:
+  schedule:
+    - cron: "17 * * * *" # every hour: scan branches that changed, alert new critical findings
+    - cron: "0 2 * * *" # every night: full rescan (picks up allowlist and rule changes)
+    - cron: "0 7 * * 1" # Monday 07:00 UTC: weekly digest to every repo owner
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What to run"
+        type: choice
+        default: scan
+        options: [scan, full, digest, inventory]
+
+# GITHUB_TOKEN only needs to read this repository. No pull_request trigger on purpose:
+# no branch or fork can run this job and reach the scanning token.
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scan # runs share one saved state, never run two at once
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    # Scheduled runs only once ENABLE_SCHEDULE=true, so testing is manual (and free plans keep their minutes).
+    if: >-
+      github.ref == 'refs/heads/main'
+      && (github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULE == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # Secrets live in this environment, restricted to the main branch (Settings > Environments).
+    environment: security-scan
+    env:
+      SOURCE: github
+      GITHUB_OWNER: ${{ vars.SCAN_GITHUB_OWNER || github.repository_owner }}
+      REPOS: ${{ vars.REPOS }}
+      EXCLUDE_REPOS: ${{ vars.EXCLUDE_REPOS }}
+      SMTP_USER: ${{ vars.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      MAIL_FROM: ${{ vars.MAIL_FROM }}
+      SEND_EMAILS: ${{ vars.SEND_EMAILS }}
+      REDIRECT_EMAILS_TO: ${{ vars.REDIRECT_EMAILS_TO }}
+      FALLBACK_EMAIL: ${{ vars.FALLBACK_EMAIL }}
+      ALLOWED_EMAIL_DOMAINS: ${{ vars.ALLOWED_EMAIL_DOMAINS }}
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Install gitleaks (pinned version, checksum verified)
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/bin" gitleaks
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - run: npm ci --ignore-scripts
+
+      # Short-lived, read-only token from the org's GitHub App (no personal token involved).
+      - name: Get a read-only token for the organisation's repositories
+        id: app-token
+        if: vars.SCAN_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_APP_PRIVATE_KEY }}
+          owner: ${{ vars.SCAN_GITHUB_OWNER || github.repository_owner }}
+          permission-contents: read
+          permission-metadata: read
+
+      - name: Restore saved state
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .state
+          key: security-agent-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: security-agent-state-
+
+      - name: Run the agent
+        env:
+          # GitHub App token if configured, otherwise a fine-grained personal access token.
+          GITHUB_SCAN_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_SCAN_TOKEN }}
+          MODE: >-
+            ${{ github.event_name == 'workflow_dispatch' && inputs.mode
+            || github.event.schedule == '0 7 * * 1' && 'digest'
+            || github.event.schedule == '0 2 * * *' && 'full'
+            || 'scan' }}
+        run: |
+          case "$MODE" in
+            scan)      node src/index.mjs ;;
+            full)      node src/index.mjs --full ;;
+            digest)    node src/index.mjs --digest ;;
+            inventory) node src/index.mjs --inventory ;;
+            *)         echo "unknown mode"; exit 1 ;;
+          esac
+
+      - name: Save state
+        if: always() && hashFiles('.state/state.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .state
+          key: security-agent-state-${{ github.run_id }}-${{ github.run_attempt }}

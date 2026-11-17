@@ -1,0 +1,49 @@
+{
+  "_status": "DRAFT - to be reviewed and approved by Khushi and the tech leads. Changes go through a pull request.",
+  "_how": "allowed = public by design, no alert. deprecated = allowed for now, low-severity reminder. A name matching a forbiddenNamePatterns entry is alerted unless it is in 'allowed'. Anything else is 'to be validated'.",
+
+  "allowed": {
+    "NEXT_PUBLIC_SUPABASE_URL": "Supabase project URL, public by design.",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_ key, public by design. Safe only if every table has RLS.",
+    "NEXT_PUBLIC_SITE_URL": "Public URL of the app.",
+    "NEXT_PUBLIC_APP_URL": "Public URL of the app."
+  },
+
+  "deprecated": {
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "Legacy Supabase anon key. Supabase removes the legacy keys at the end of 2026: migrate to NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (sb_publishable_)."
+  },
+
+  "forbiddenNamePatterns": [
+    {
+      "pattern": "SECRET|SERVICE_ROLE|SERVICE_KEY|PRIVATE|PASSWORD|PASSWD|TOKEN|CREDENTIAL",
+      "severity": "critical",
+      "reason": "the name says it is a secret"
+    },
+    {
+      "pattern": "OPENAI|ANTHROPIC|CLAUDE|PERPLEXITY|SERPAPI|GEMINI|MISTRAL|GROQ|COHERE",
+      "severity": "critical",
+      "reason": "AI provider key: anyone visiting the site can spend on our account"
+    },
+    {
+      "pattern": "DATABASE_URL|POSTGRES|DB_URL|MONGO|REDIS",
+      "severity": "critical",
+      "reason": "database connection details"
+    },
+    {
+      "pattern": "DEMO_MODE|SKIP_AUTH|DISABLE_AUTH|BYPASS_AUTH|NO_AUTH",
+      "severity": "high",
+      "reason": "a security switch that visitors can read and that should never live in the browser"
+    }
+  ],
+
+  "forbiddenValuePatterns": [
+    { "pattern": "^sk-ant-", "reason": "Anthropic API key" },
+    { "pattern": "^sk-", "reason": "OpenAI-style secret key" },
+    { "pattern": "^sb_secret_", "reason": "Supabase secret key" },
+    { "pattern": "BEGIN [A-Z ]*PRIVATE KEY", "reason": "private key" },
+    { "pattern": "^gl(pat|dt|ptt|rt)-", "reason": "GitLab token" },
+    { "pattern": "^gh[pousr]_", "reason": "GitHub token" },
+    { "pattern": "^xox[abpr]-", "reason": "Slack token" },
+    { "pattern": "^(postgres|postgresql|mysql|mongodb(\\+srv)?|redis)://", "reason": "database connection string" }
+  ]
+}

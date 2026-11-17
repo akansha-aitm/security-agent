@@ -1,0 +1,4 @@
+{
+  "_how": "Optional. GitHub username -> work email, for people whose GitHub email is private (commits show as ...@users.noreply.github.com). Only needed when CODEOWNERS uses @username or when the owner is picked from commits.",
+  "_example-username": "firstname.lastname@company-domain"
+}
