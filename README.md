@@ -81,9 +81,11 @@ are scanned too, so `git fetch --all` first).
    owned by the organisation, stored as the secret `GITHUB_SCAN_TOKEN`. The App is preferred: it does not
    belong to a person and its tokens last one hour.
 
-3. **Email account.** The company `support@` account (a real Workspace user, not a group) with
-   2-Step Verification on, then an App Password for it. The normal password does not work. Alerts show
-   up in support@'s Sent folder; `MAIL_REPLY_TO` sends replies elsewhere.
+3. **Email account.** Alerts are sent from the company `support@` account through the Gmail API, with a
+   send-only Google sign-in (cannot read the mailbox): a Google Cloud project with an internal OAuth app,
+   then `npm run gmail-auth` once, signed in as support@. Step by step: [docs/TESTING.md](docs/TESTING.md#4-give-the-agent-permission-to-send-as-support-send-only-google-sign-in).
+   Alerts show up in support@'s Sent folder; `MAIL_REPLY_TO` sends replies elsewhere.
+   (Gmail SMTP with an App Password still works: set `SMTP_USER` and `SMTP_PASS` instead of the `GMAIL_*` values.)
 
 4. **GitHub environment.** In the agent's repo: Settings > Environments > New `security-scan`,
    deployment branches: `main` only. Add to it:
@@ -92,8 +94,9 @@ are scanned too, so `git fetch --all` first).
    |---|---|---|
    | `SCAN_APP_CLIENT_ID` | variable | the App's Client ID |
    | `SCAN_APP_PRIVATE_KEY` | secret | the App's private key |
-   | `SMTP_PASS` | secret | App Password |
-   | `SMTP_USER` | variable | `support@aitomarketgroup.com` |
+   | `GMAIL_CLIENT_ID` | variable | printed by `npm run gmail-auth` |
+   | `GMAIL_CLIENT_SECRET` | secret | printed by `npm run gmail-auth` |
+   | `GMAIL_REFRESH_TOKEN` | secret | printed by `npm run gmail-auth` |
    | `MAIL_FROM` | variable | `AITM Security Agent <support@aitomarketgroup.com>` |
    | `MAIL_REPLY_TO` | variable | optional: where replies go, instead of the support inbox |
    | `ALLOWED_EMAIL_DOMAINS` | variable | company domain(s): alerts never go to personal addresses |
@@ -125,7 +128,7 @@ bare clone/fetch (token passed through git's env config, never in the URL)
    ▼
 findings with fingerprints, saved between runs in the Actions cache          (src/state.mjs)
    ▼
-owner lookup (src/owners.mjs) → one email per person (src/notify.mjs)
+owner lookup (src/owners.mjs) → one email per person (src/notify.mjs, sent by src/mailer.mjs)
 ```
 
 Repository sources live in `src/sources/` (`github.mjs`, `gitlab.mjs`), selected with `SOURCE`.

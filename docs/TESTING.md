@@ -47,23 +47,46 @@ github.com > Settings > Developer settings > Personal access tokens > **Fine-gra
 
 Copy the token (it starts with `github_pat_`).
 
-## 4. Create an App Password for the sending account (support@)
+## 4. Give the agent permission to send as support@ (send-only Google sign-in)
 
 Alerts are sent **from the company support account**, but during the test they all go **to you**
-(`REDIRECT_EMAILS_TO`). The support account's normal password does **not** work: Google refuses it
-for scripts. You need an App Password, which only works for this kind of sign-in and can be revoked alone.
+(`REDIRECT_EMAILS_TO`). The agent gets a send-only permission: it cannot read the support mailbox,
+and support@ needs no App Password or 2-Step Verification.
 
-1. Sign in to myaccount.google.com **as support@** (a private window avoids mixing it with your account).
-2. Security > **2-Step Verification**: turn it on if it is off. Agree with whoever else uses this
-   account which phone or method receives the codes.
-3. Security > **App passwords** (or go to myaccount.google.com/apppasswords) > name it `security-agent` > Create.
-4. Copy the 16-character password. Spaces do not matter. Paste it only into GitHub (step 5): not in a
-   chat, a file or an email. It is shown once; if lost, delete it and create a new one.
+**4a. Google Cloud project** (signed in with your own work account, at console.cloud.google.com)
 
-If "App passwords" is missing: 2-Step Verification is still off, or the Workspace admin has disabled
-App Passwords (Admin console > Security > Authentication > 2-Step Verification / Less secure apps settings).
+1. Project picker (top bar) > **New project**, name `security-agent`. Organisation: your company domain.
+2. APIs & Services > Library > **Gmail API** > Enable.
+3. APIs & Services > **OAuth consent screen** (Google Auth Platform) > Get started:
+   app name `AITM Security Agent`, support email: yours, audience **Internal**, contact email: yours.
+   Internal means only company accounts can sign in, and Google does not need to review the app.
+4. **Data access** > Add or remove scopes > tick `.../auth/gmail.send` > Update > Save.
+5. **Clients** > Create client > Application type **Desktop app**, name `security-agent` > Create >
+   **Download JSON**. Keep the file out of the project folder (e.g. in Downloads).
 
-Tell whoever reads support@: alerts appear in its **Sent** folder. Replies go to `MAIL_REPLY_TO`, not to support@.
+If "Internal" cannot be selected, the project has no organisation: pick the company organisation when
+creating it, or ask the Workspace admin. (Avoid "External" + "Testing": its sign-ins expire after 7 days.)
+
+**4b. Sign in once as support@** (in your own terminal window, not through a chat assistant: it prints secrets)
+
+```sh
+cd AITM-security_agent
+npm run gmail-auth -- "C:/Users/<you>/Downloads/client_secret_XXXX.json" --account support@aitomarketgroup.com
+```
+
+A browser opens: sign in **as support@**, allow "Send email on your behalf". The terminal then prints
+three values: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`. Copy them into GitHub
+(step 5), then close the terminal and delete the downloaded JSON file.
+
+The script refuses to print anything if you signed in with a different account or did not allow sending.
+
+**Good to know**
+
+- If support@'s **password changes**, Google cancels the permission: run step 4b again and replace
+  `GMAIL_REFRESH_TOKEN`. The run's log says `invalid_grant` when this happens.
+- To stop the agent sending: as support@, myaccount.google.com > Security > Third-party connections >
+  AITM Security Agent > Remove access.
+- Alerts appear in support@'s **Sent** folder; tell whoever reads that inbox. Replies go to `MAIL_REPLY_TO`.
 
 ## 5. Configure the agent's repository
 
@@ -74,13 +97,14 @@ In `security-agent` on GitHub: Settings > Secrets and variables > Actions.
 | Name | Value |
 |---|---|
 | `GITHUB_SCAN_TOKEN` | the fine-grained token |
-| `SMTP_PASS` | the support@ App Password |
+| `GMAIL_CLIENT_SECRET` | printed by `npm run gmail-auth` |
+| `GMAIL_REFRESH_TOKEN` | printed by `npm run gmail-auth` |
 
 **Variables**
 
 | Name | Value |
 |---|---|
-| `SMTP_USER` | `support@aitomarketgroup.com` |
+| `GMAIL_CLIENT_ID` | printed by `npm run gmail-auth` |
 | `MAIL_FROM` | `AITM Security Agent <support@aitomarketgroup.com>` |
 | `MAIL_REPLY_TO` | your email (replies come to you, not to the support inbox) |
 | `SEND_EMAILS` | `true` |
@@ -122,9 +146,10 @@ Actions tab > **security-scan** > Run workflow, choose the mode.
 **To be validated (2):** `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_GA_MEASUREMENT_ID`.
 `feature/clean` must not add any issue.
 
-If no email arrives, open the run's log: `cannot sign in to smtp.gmail.com ... 535-5.7.8` means the
-password is not an App Password (or was mistyped); `SMTP_USER or SMTP_PASS is not set` means a secret or
-variable name is wrong. Nothing is marked as sent in either case, so the next run retries.
+If no email arrives, open the run's log: `cannot sign in to Gmail API ... invalid_grant` means the sign-in
+was cancelled (password change, access removed) or the token was pasted wrongly: redo step 4b;
+`no sender configured` or `GMAIL_CLIENT_ID ... missing` means a secret or variable name is wrong.
+Nothing is marked as sent in either case, so the next run retries.
 
 Check in every email: it starts with "[Pilot mode: this email was meant for ...]", "Why you" says
 `.github/CODEOWNERS`, and **no key value appears anywhere**.
@@ -136,7 +161,7 @@ Check in every email: it starts with "[Pilot mode: this email was meant for ...]
 3. An org admin creates the GitHub App (Contents: read, Metadata: read), installs it on all repositories,
    and you set `SCAN_APP_CLIENT_ID` (variable) and `SCAN_APP_PRIVATE_KEY` (secret).
 4. Move secrets into an environment `security-scan` restricted to `main`; protect `main`.
-5. Keep support@ as the sender (or switch `SMTP_USER`, `MAIL_FROM`, `SMTP_PASS` to a dedicated account),
-   set `ALLOWED_EMAIL_DOMAINS` and `FALLBACK_EMAIL`.
+5. Keep support@ as the sender (move the `GMAIL_*` values into the `security-scan` environment), set
+   `ALLOWED_EMAIL_DOMAINS` and `FALLBACK_EMAIL`.
 6. Run **inventory**, review the list with Khushi, update the allowlist.
 7. Keep `REDIRECT_EMAILS_TO` for a few days with all repos, then remove it and set `ENABLE_SCHEDULE=true`.

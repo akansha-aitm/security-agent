@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 // Environment variables whose values must never reach logs, errors or emails.
-const SECRET_ENV_NAMES = ["GITHUB_SCAN_TOKEN", "GITLAB_TOKEN", "SMTP_PASS"];
+const SECRET_ENV_NAMES = ["GITHUB_SCAN_TOKEN", "GITLAB_TOKEN", "SMTP_PASS", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"];
 
 export function scrub(text = "") {
   let out = String(text);

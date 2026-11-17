@@ -39,6 +39,9 @@ jobs:
       EXCLUDE_REPOS: ${{ vars.EXCLUDE_REPOS }}
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      GMAIL_CLIENT_ID: ${{ vars.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
       MAIL_FROM: ${{ vars.MAIL_FROM }}
       MAIL_REPLY_TO: ${{ vars.MAIL_REPLY_TO }}
       SEND_EMAILS: ${{ vars.SEND_EMAILS }}
