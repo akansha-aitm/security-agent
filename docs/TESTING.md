@@ -114,6 +114,12 @@ In `security-agent` on GitHub: Settings > Secrets and variables > Actions.
 Do **not** set `ENABLE_SCHEDULE`: during the test the workflow only runs when you start it.
 `SCAN_GITHUB_OWNER` is not needed: it defaults to the account that owns the agent's repo.
 
+**Scanning all your repositories instead of only the sample:** create the token with Repository access
+**All repositories** (same permission, Contents: Read-only), delete the `REPOS` variable, and add the
+variable `FALLBACK_EMAIL` = your email. Repos without a `CODEOWNERS` file may have no owner the agent
+can find; without `FALLBACK_EMAIL` their alerts are not sent. Forks, archived repos and the agent's own
+repo are skipped. The counts in the table below then include your other repos' findings.
+
 ## 6. Run the test scenarios
 
 Actions tab > **security-scan** > Run workflow, choose the mode.
