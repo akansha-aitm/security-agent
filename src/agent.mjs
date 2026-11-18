@@ -129,6 +129,7 @@ export async function runAgent(options) {
     if (digest && delivered.length === batch.emails.length) state.lastDigestAt = now;
   }
   summary.emailsSent = delivered.length;
+  summary.dryRun = dryRun;
   summary.undeliverable = batch.undeliverable.length;
   if (batch.undeliverable.length)
     warn(`${batch.undeliverable.length} finding(s) have no recipient: set FALLBACK_EMAIL or add CODEOWNERS files`);
@@ -203,14 +204,17 @@ function writeInventory(inventory, outDir) {
 function writeSummary(state, summary) {
   const open = Object.values(state.findings).filter((f) => f.status === "open");
   const counts = SEVERITIES.map((s) => `${s}: ${open.filter((f) => f.severity === s).length}`).join(", ");
+  const emailLine = summary.dryRun
+    ? `${summary.emailsSent} NOT sent (dry run: set the variable SEND_EMAILS to true to send)`
+    : `${summary.emailsSent} sent`;
   log(
     `done: ${summary.reposScanned}/${summary.repos} repos and ${summary.branchesScanned} branches scanned, ` +
-      `${summary.errors} error(s), ${summary.emailsSent} email(s). Open findings: ${counts}`,
+      `${summary.errors} error(s), emails: ${emailLine}. Open findings: ${counts}`,
   );
   if (process.env.GITHUB_STEP_SUMMARY)
     appendFileSync(
       process.env.GITHUB_STEP_SUMMARY,
       `## Security scan\n\n- Repos scanned: ${summary.reposScanned}/${summary.repos}\n- Branches scanned: ${summary.branchesScanned}\n` +
-        `- Errors: ${summary.errors}\n- Emails sent: ${summary.emailsSent}\n- Open findings: ${counts}\n`,
+        `- Errors: ${summary.errors}\n- Emails: ${emailLine}\n- Open findings: ${counts}\n`,
     );
 }
