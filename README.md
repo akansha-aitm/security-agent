@@ -67,7 +67,6 @@ Commits made with a private GitHub email (`…@users.noreply.github.com`) need t
 | scan | hourly | new **critical** findings, immediately |
 | full | nightly | same as scan, but rescans every branch (picks up allowlist changes) |
 | digest | Monday 07:00 UTC | every open finding per owner, plus what was fixed |
-| scan of one repo | after each push to that repo (optional, see below) | new critical findings |
 | inventory | manual | none: lists every `NEXT_PUBLIC_` name and every API endpoint with its kind and access (job summary, `out/*.csv` locally), to build the allowlists |
 
 ## Testing
@@ -131,15 +130,7 @@ are scanned too, so `git fetch --all` first).
    | `SCAN_GITHUB_OWNER` | variable | optional: organisation or account to scan, defaults to the owner of the agent's repo |
    | `ENABLE_SCHEDULE` | variable | `true` turns on the hourly/nightly/weekly runs (otherwise manual runs only) |
 
-5. **Scan right after each push (optional).** Copy [`templates/notify-security-agent.yml`](templates/notify-security-agent.yml)
-   to `.github/workflows/` in a repo. Each push then starts a scan of that repo only, instead of waiting for
-   the hourly run. That repo needs the secret `SECURITY_AGENT_TRIGGER_TOKEN` (fine-grained token, access to
-   the agent's repo only, permission **Actions: Read and write**: it can start the agent, nothing else) and the
-   variable `SECURITY_AGENT_REPO` (`owner/security-agent`). For a whole organisation, an organisation-level
-   secret and variable avoid repeating them; adding the file to every repo is still needed (or a GitHub App
-   webhook later).
-
-6. **Roll out in steps.**
+5. **Roll out in steps.**
    1. Run *inventory* by hand (Actions > security-scan > Run workflow), review the `NEXT_PUBLIC_` list and the
       endpoint list with Khushi and the tech leads, update both config files by pull request.
    2. Pilot: `REPOS` = a test repo with planted issues, `REDIRECT_EMAILS_TO` = you, `SEND_EMAILS=true`.
@@ -174,8 +165,8 @@ they are visible to anyone with access to this repository.
 - `@org/team` in `CODEOWNERS` and team-based repo access are not expanded to people.
 - Only the root `.gitignore` is checked (monorepos with per-app `.gitignore` may get a false alert).
 - `NEXT_PUBLIC_` values are only checked when committed; values stored in Vercel are not checked.
-- Hourly polling of the GitHub API; per-push scans need the notify workflow in each repo. If several pushes
-  arrive during a run, GitHub keeps only the latest waiting run: the others are picked up by the hourly scan.
+- Hourly polling of the GitHub API: a new issue is found within the hour, not at push time. Scanning on
+  every push is planned for later (GitHub App webhook, so no file is needed in each repo).
 - Endpoint checks are text heuristics: custom login helpers, wrappers or URLs built at runtime need
   `config/endpoints.json` entries. Whether a container is itself reachable from the internet is not checked
   (cloud setting, outside the repo). Object ownership ("is this the user's own record?") is not checked.

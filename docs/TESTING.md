@@ -160,43 +160,27 @@ Nothing is marked as sent in either case, so the next run retries.
 Check in every email: it starts with "[Pilot mode: this email was meant for ...]", "Why you" says
 `.github/CODEOWNERS`, and **no key value appears anywhere**.
 
-## 7. API endpoint checks, and a scan after every push
+## 7. API endpoint checks
 
 **7a. Add the planted routes to the sample repo** (already done locally if Claude ran it for you)
 
 ```sh
 cd AITM-security_agent
 node test/add-sample-routes.mjs ../security-agent-sample-app
-```
-
-It adds, on `main`, `.github/workflows/notify-security-agent.yml` (asks the agent to scan after each push),
-and a new branch `feature/api-routes` with 18 endpoints: 8 safe, 10 unsafe.
-
-**7b. Let the sample repo start the agent** (before pushing, so the pushes are picked up)
-
-1. github.com > Settings > Developer settings > Fine-grained tokens > Generate:
-   name `security-agent-trigger`, expiration 30 days, resource owner: you,
-   **Only select repositories** > `security-agent`, permission **Actions: Read and write**. Nothing else.
-   This token can only start the agent's workflow: it cannot read code, change code or read secrets.
-2. In `security-agent-sample-app` (not the agent's repo): Settings > Secrets and variables > Actions:
-   - secret `SECURITY_AGENT_TRIGGER_TOKEN` = that token
-   - variable `SECURITY_AGENT_REPO` = `<your-username>/security-agent`
-
-**7c. Push and check**
-
-```sh
 cd ../security-agent-sample-app
-git push origin main
 git push -u origin feature/api-routes
 ```
 
+It creates a branch `feature/api-routes` with 18 endpoints: 8 safe, 10 unsafe.
+
+**7b. Run and check** (Actions > security-scan > Run workflow)
+
 | # | Do | Expected |
 |---|---|---|
-| 8 | Push `main` (above) | Sample repo > Actions: a **notify-security-agent** run, "Scan requested". Agent repo > Actions: a **security-scan** run started by workflow_dispatch, scanning only the sample repo. No email (nothing new on main). |
-| 9 | Push `feature/api-routes` | Same two runs. One email with **2 new critical issues**: no login check on `/api/ai/generate` (LLM) and `/api/admin/set-role` (uses the Supabase secret key). |
-| 10 | Run **inventory** | Job summary, "API endpoints": 18 rows. 0 issues on `/api/chat`, `/api/search`, `/api/summaries`, `/api/webhooks/stripe`, `/api/cron/refresh`, `/api/health`, `server actions in app/actions/profile.ts`, `/functions/v1/hello`. |
-| 11 | Run **digest** | The endpoint issues are listed with the others: 12 high and 8 medium more than before. |
-| 12 | Fix one: on `feature/api-routes`, delete `app/api/admin/set-role/route.ts`, push | A scan starts by itself, no email. The next digest lists 2 fixed issues for `/api/admin/set-role`. |
+| 8 | Run **scan** | One email with **2 new critical issues**: no login check on `/api/ai/generate` (LLM) and `/api/admin/set-role` (uses the Supabase secret key). |
+| 9 | Run **inventory** | Job summary, "API endpoints": 18 rows. 0 issues on `/api/chat`, `/api/search`, `/api/summaries`, `/api/webhooks/stripe`, `/api/cron/refresh`, `/api/health`, `server actions in app/actions/profile.ts`, `/functions/v1/hello`. |
+| 10 | Run **digest** | The endpoint issues are listed with the others: 12 high and 8 medium more than before. |
+| 11 | Fix one: on `feature/api-routes`, delete `app/api/admin/set-role/route.ts`, push, run **scan** | No email. The next digest lists 2 fixed issues for `/api/admin/set-role`. |
 
 Issues expected on the unsafe endpoints (the unit test checks the same list):
 
@@ -213,7 +197,7 @@ Issues expected on the unsafe endpoints (the unit test checks the same list):
 | `server actions in app/actions/notes.ts` | server action | no login (high) |
 | `/functions/v1/send-digest` | Supabase function | `verify_jwt = false` and no login (high); no timeout (medium) |
 
-If the saved state was lost (no run for 7 days), scenario 9 re-sends all 10 critical issues once.
+If the saved state was lost (no run for 7 days), scenario 8 re-sends all 10 critical issues once.
 
 ## 8. Move to the organisation
 
