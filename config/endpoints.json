@@ -1,0 +1,39 @@
+{
+  "_comment": "Rules for the endpoint checks (src/checks/endpoints.mjs). Change by pull request, reviewed by a tech lead. Keys starting with _ are ignored.",
+
+  "_publicRoutes": "Routes anyone may call without signing in. A public route is a written decision. * = one path segment, ** = any depth.",
+  "publicRoutes": ["/api/health", "/auth/callback", "/auth/confirm", "/api/auth/[...nextauth]"],
+
+  "_authHelpers": "Function names that count as a login check when the route calls them. Add each project's own helpers (e.g. requireUser). getSession() does NOT count on the server: it does not verify the token.",
+  "authHelpers": ["getUser", "getClaims", "auth", "currentUser", "getServerSession", "requireUser", "requireAuth", "requireSession", "withAuth", "verifyAuth", "validateRequest", "getAuthenticatedUser"],
+
+  "_rateLimitHelpers": "Names that count as a rate limit (Upstash Ratelimit and common helper names are also recognised).",
+  "rateLimitHelpers": ["ratelimit", "rateLimit", "checkRateLimit", "limiter", "enforceQuota", "checkQuota"],
+
+  "llm": {
+    "packages": ["openai", "@anthropic-ai/sdk", "ai", "@ai-sdk/", "@google/genai", "@google/generative-ai", "@mistralai/mistralai", "groq-sdk", "cohere-ai", "@langchain/", "langchain", "replicate", "@huggingface/inference", "@openrouter/"],
+    "hosts": ["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com", "aiplatform.googleapis.com", "api.mistral.ai", "api.groq.com", "api.perplexity.ai", "api.cohere.ai", "api.cohere.com", "openrouter.ai", "api.x.ai", "api.together.xyz", "api.replicate.com"]
+  },
+
+  "thirdParty": {
+    "packages": ["stripe", "resend", "@sendgrid/", "twilio", "serpapi", "google-search-results-nodejs", "@slack/", "@notionhq/client", "@hubspot/", "googleapis", "@octokit/", "firecrawl", "@mendable/firecrawl-js", "apify-client", "@upstash/qstash"],
+    "ignoreHosts": ["localhost", "127.0.0.1", "www.w3.org", "w3.org", "schema.org", "example.com", "json-schema.org"]
+  },
+
+  "_envUrls": "How to classify URLs read from environment variables (process.env.X_URL...). Exact names win, then the patterns. Unknown names are treated as 'container (assumed)': add them here to be sure.",
+  "envUrls": {
+    "names": {
+      "NEXT_PUBLIC_SUPABASE_URL": "database",
+      "SUPABASE_URL": "database",
+      "NEXT_PUBLIC_SITE_URL": "ignore",
+      "NEXT_PUBLIC_APP_URL": "ignore",
+      "VERCEL_URL": "ignore",
+      "N8N_WEBHOOK_URL": "third-party"
+    },
+    "containerPattern": "WORKER|BACKEND|SERVICE|CONTAINER|INTERNAL|CLOUD_RUN|MICROSERVICE|PROCESSOR|SCRAPER|PIPELINE",
+    "thirdPartyPattern": "N8N|ZAPIER|MAKE_|SLACK|DISCORD|WEBHOOK"
+  },
+
+  "_repos": "Per-repository additions, keyed by owner/name: publicRoutes, authHelpers, rateLimitHelpers, envUrls.names.",
+  "repos": {}
+}

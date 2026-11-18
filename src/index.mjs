@@ -26,6 +26,8 @@ const list = (v) => (v ?? "").split(",").map((s) => s.trim().toLowerCase()).filt
 
 function sourceConfig() {
   const kind = (process.env.SOURCE || "github").toLowerCase();
+  // REPOS can come from a workflow input (a push in another repo): accept repository names only.
+  if (!/^[\w.\/,\s-]*$/.test(process.env.REPOS ?? "")) throw new Error("REPOS contains characters that are not allowed in repository names");
   const repos = list(process.env.REPOS);
   // Never scan the agent's own repository: its tests contain planted (fake) issues by design.
   const exclude = list(process.env.EXCLUDE_REPOS).concat(list(process.env.GITHUB_REPOSITORY));

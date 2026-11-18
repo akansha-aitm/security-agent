@@ -2,6 +2,7 @@
 // (git grep / cat-file on a commit), never through a checkout, and never run the repo's code.
 import { git } from "../util.mjs";
 import { classifyVar, secretKindOfValue } from "../rules.mjs";
+import { runEndpointChecks } from "./endpoints.mjs";
 
 const NEXT_PUBLIC_RE = "NEXT_PUBLIC_[A-Za-z0-9_]+";
 const GREP_EXCLUDES = [
@@ -75,8 +76,9 @@ export function gitignoreIgnoresEnv(text) {
  * { fp, check, severity, title, advice, location }
  * fp identifies the issue inside the repo, independent of branch and line, so the same issue on
  * twelve branches becomes one alert listing the branches.
+ * hooks: { repo, onVar(name, classification), onEndpoint(endpoint) } for the inventory.
  */
-export function runBranchChecks(dir, sha, rules, inventory) {
+export function runBranchChecks(dir, sha, rules, hooks = {}) {
   const items = [];
   const files = listFiles(dir, sha);
 
@@ -84,7 +86,7 @@ export function runBranchChecks(dir, sha, rules, inventory) {
   const forbiddenCritical = new Set();
   for (const u of findPublicEnvUsages(dir, sha)) {
     const c = classifyVar(u.name, rules);
-    inventory?.(u.name, c);
+    hooks.onVar?.(u.name, c);
     if (c.status === "allowed") continue;
     if (c.status === "forbidden" && c.severity === "critical") forbiddenCritical.add(u.name);
     items.push({
@@ -155,6 +157,9 @@ export function runBranchChecks(dir, sha, rules, inventory) {
         'Remove the "env" key. Read server values with process.env in server code only; only public values may use the NEXT_PUBLIC_ prefix.',
     });
   }
+
+  // 5. API endpoints: login checks, and rules per kind (LLM, third-party, container)
+  items.push(...runEndpointChecks(dir, sha, files, rules.endpoints, { repo: hooks.repo, onEndpoint: hooks.onEndpoint }));
 
   return items;
 }

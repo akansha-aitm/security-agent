@@ -1,13 +1,13 @@
-# AITM security agent (Phase 1 prototype)
+# AITM security agent (prototype)
 
-Scans every branch of every repository in the company's GitHub organisation for exposed secrets,
-and emails the repository's tech lead. It runs on GitHub Actions and only reads the repositories.
+Scans every branch of every repository in the company's GitHub organisation for exposed secrets and
+unprotected API endpoints, and emails the repository's tech lead. It runs on GitHub Actions and only reads the repositories.
 (GitLab support is built in, behind `SOURCE=gitlab`, for a later phase.)
 
 It never runs a scanned repository's code (no install, build or test), and never puts a secret value
 in an email, a log or its saved state. Rules come from the `ai-to-market-security` skill.
 
-## What Phase 1 checks
+## What it checks
 
 | Check | Where | Severity |
 |---|---|---|
@@ -18,6 +18,28 @@ in an email, a log or its saved state. Rules come from the `ai-to-market-securit
 | Root `.gitignore` does not exclude `.env*` | every branch | high |
 | `next.config` `env` key (copies values into the browser) | every branch | high |
 | Secrets anywhere in history (gitleaks, default rules) | full history | critical |
+| API endpoints: login checks and rules per kind (below) | every branch | critical to medium |
+
+### API endpoint checks
+
+Every endpoint is found (`app/**/route.ts`, `pages/api/**`, `"use server"` files, `supabase/functions/*`)
+and sorted by what it calls, reading the route and the local files it imports:
+**LLM** (AI libraries or AI hosts), **third-party** (Stripe, SerpApi, Resend... or any outside URL),
+**container** (our own services: URLs from settings like `WORKER_URL`), or **other**.
+Rules live in [`config/endpoints.json`](config/endpoints.json): approved public routes, login-helper
+names, URL settings, with per-repo additions.
+
+| Kind | Checks |
+|---|---|
+| all | login check on the endpoint, unless approved public (critical if it calls an LLM or uses the Supabase secret key); user id/role taken from the request; user-supplied URL fetched (SSRF); keys in logs; GET that changes data |
+| cron / webhook | `CRON_SECRET` check / signature verification instead of a login |
+| LLM | rate limit; model, system prompt or settings taken from the request; input size limit; `maxDuration`; no GET |
+| third-party / container | timeout on outgoing calls |
+| container | sends a service credential, never the user's headers |
+| Supabase function | `verify_jwt = false` without a login check |
+
+These read the source text: "no login check found" means a person should look. A project's own login
+helper (e.g. `requireUser()`) must be added to `authHelpers`, or its routes are reported.
 
 The same issue on several branches is a single alert that lists the branches. Archived repos and
 forks are skipped, and so is the agent's own repository (its tests plant fake issues on purpose).
@@ -45,7 +67,8 @@ Commits made with a private GitHub email (`…@users.noreply.github.com`) need t
 | scan | hourly | new **critical** findings, immediately |
 | full | nightly | same as scan, but rescans every branch (picks up allowlist changes) |
 | digest | Monday 07:00 UTC | every open finding per owner, plus what was fixed |
-| inventory | manual | none: lists every `NEXT_PUBLIC_` name in use (in the job summary), to build the allowlist |
+| scan of one repo | after each push to that repo (optional, see below) | new critical findings |
+| inventory | manual | none: lists every `NEXT_PUBLIC_` name and every API endpoint with its kind and access (job summary, `out/*.csv` locally), to build the allowlists |
 
 ## Testing
 
@@ -108,9 +131,17 @@ are scanned too, so `git fetch --all` first).
    | `SCAN_GITHUB_OWNER` | variable | optional: organisation or account to scan, defaults to the owner of the agent's repo |
    | `ENABLE_SCHEDULE` | variable | `true` turns on the hourly/nightly/weekly runs (otherwise manual runs only) |
 
-5. **Roll out in steps.**
-   1. Run *inventory* by hand (Actions > security-scan > Run workflow), review the `NEXT_PUBLIC_` list
-      with Khushi and the tech leads, update the allowlist by pull request.
+5. **Scan right after each push (optional).** Copy [`templates/notify-security-agent.yml`](templates/notify-security-agent.yml)
+   to `.github/workflows/` in a repo. Each push then starts a scan of that repo only, instead of waiting for
+   the hourly run. That repo needs the secret `SECURITY_AGENT_TRIGGER_TOKEN` (fine-grained token, access to
+   the agent's repo only, permission **Actions: Read and write**: it can start the agent, nothing else) and the
+   variable `SECURITY_AGENT_REPO` (`owner/security-agent`). For a whole organisation, an organisation-level
+   secret and variable avoid repeating them; adding the file to every repo is still needed (or a GitHub App
+   webhook later).
+
+6. **Roll out in steps.**
+   1. Run *inventory* by hand (Actions > security-scan > Run workflow), review the `NEXT_PUBLIC_` list and the
+      endpoint list with Khushi and the tech leads, update both config files by pull request.
    2. Pilot: `REPOS` = a test repo with planted issues, `REDIRECT_EMAILS_TO` = you, `SEND_EMAILS=true`.
    3. Remove `REPOS` (all repos), keep the redirect for a few days to check the noise.
    4. Remove `REDIRECT_EMAILS_TO`: owners get their alerts.
@@ -123,7 +154,8 @@ GitHub API: org repos + branch tips
    ▼
 bare clone/fetch (token passed through git's env config, never in the URL)
    │
-   ├─ per changed branch: git grep / ls-tree / cat-file on the tip commit  (src/checks/branch.mjs)
+   ├─ per changed branch: git grep / ls-tree / cat-file on the tip commit  (src/checks/branch.mjs,
+   │                      API endpoints in src/checks/endpoints.mjs)
    └─ per repo: .env files in history + gitleaks over all commits           (src/checks/history.mjs)
    ▼
 findings with fingerprints, saved between runs in the Actions cache          (src/state.mjs)
@@ -142,4 +174,8 @@ they are visible to anyone with access to this repository.
 - `@org/team` in `CODEOWNERS` and team-based repo access are not expanded to people.
 - Only the root `.gitignore` is checked (monorepos with per-app `.gitignore` may get a false alert).
 - `NEXT_PUBLIC_` values are only checked when committed; values stored in Vercel are not checked.
-- Hourly polling of the GitHub API, no webhook (yet).
+- Hourly polling of the GitHub API; per-push scans need the notify workflow in each repo. If several pushes
+  arrive during a run, GitHub keeps only the latest waiting run: the others are picked up by the hourly scan.
+- Endpoint checks are text heuristics: custom login helpers, wrappers or URLs built at runtime need
+  `config/endpoints.json` entries. Whether a container is itself reachable from the internet is not checked
+  (cloud setting, outside the repo). Object ownership ("is this the user's own record?") is not checked.

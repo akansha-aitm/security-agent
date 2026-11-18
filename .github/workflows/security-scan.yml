@@ -12,6 +12,10 @@ on:
         type: choice
         default: scan
         options: [scan, full, digest, inventory]
+      repo:
+        description: "Only this repository (name, optional). Sent by the notify workflow in each repo after a push."
+        type: string
+        required: false
 
 # GITHUB_TOKEN only needs to read this repository. No pull_request trigger on purpose:
 # no branch or fork can run this job and reach the scanning token.
@@ -35,7 +39,8 @@ jobs:
     env:
       SOURCE: github
       GITHUB_OWNER: ${{ vars.SCAN_GITHUB_OWNER || github.repository_owner }}
-      REPOS: ${{ vars.REPOS }}
+      # A run started by a push scans only the pushed repo. Still limited to the owner's repos the token can read.
+      REPOS: ${{ inputs.repo || vars.REPOS }}
       EXCLUDE_REPOS: ${{ vars.EXCLUDE_REPOS }}
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASS: ${{ secrets.SMTP_PASS }}

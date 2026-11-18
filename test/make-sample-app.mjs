@@ -122,4 +122,5 @@ commit("Fix env handling");
 g("checkout", "-q", "main");
 console.log(`Sample app created in ${target}`);
 console.log("Branches: main, feature/ai-chat, feature/payments, feature/clean");
+console.log("Optional: node test/add-sample-routes.mjs <dir> adds the API-route examples and the notify workflow.");
 console.log("Next: create a PRIVATE GitHub repo and push all branches (see docs/TESTING.md).");

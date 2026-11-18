@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { createGitHubSource } from "./sources/github.mjs";
 import { createGitLabSource } from "./sources/gitlab.mjs";
 import { isEnvFile, listFiles, runBranchChecks } from "./checks/branch.mjs";
+import { loadEndpointRules } from "./checks/endpoints.mjs";
 import { envFilesInHistory, gitleaksScan } from "./checks/history.mjs";
 import { loadDirectory, resolveOwners } from "./owners.mjs";
 import { loadRules } from "./rules.mjs";
@@ -18,11 +19,11 @@ const RESOLVED_RETENTION_DAYS = 90;
  *   local: string[]        scan these local repositories instead of GitHub/GitLab (testing)
  *   full: boolean          rescan every branch even if unchanged (after a rule or allowlist change)
  *   digest: boolean        send the weekly digest of all open findings
- *   inventory: boolean     only list NEXT_PUBLIC_ variables, no findings, no emails
+ *   inventory: boolean     only list NEXT_PUBLIC_ variables and API endpoints, no findings, no emails
  *   dryRun: boolean        write emails to outDir instead of sending. Scan progress is saved, but
  *                          nothing is marked as alerted, so going live later still sends every alert.
  *   send: function         replaces the email sender (tests)
- *   statePath, outDir, workDir, allowlistPath
+ *   statePath, outDir, workDir, allowlistPath, endpointsPath
  *   source: { kind: "github", org, token, apiUrl, repos[], exclude[] }
  *        or { kind: "gitlab", group, token, url, repos[], exclude[] }   (ignored with local)
  *   settings: { allowedDomains[], fallback, redirectTo }
@@ -32,6 +33,7 @@ export async function runAgent(options) {
   const { statePath = ".state/state.json", outDir = "out", workDir = ".work", settings } = options;
   const now = options.now ?? new Date().toISOString();
   const rules = loadRules(options.allowlistPath);
+  rules.endpoints = loadEndpointRules(options.endpointsPath);
   const state = loadState(statePath);
   const source = local.length ? null : createSource(options.source);
   const directory = loadDirectory(options.userEmailsPath);
@@ -44,6 +46,15 @@ export async function runAgent(options) {
     const entry = inventory.get(name) ?? { classification, repos: new Set() };
     entry.repos.add(currentRepo);
     inventory.set(name, entry);
+  };
+  // API endpoint inventory: "repo route" -> endpoint, with the branches it was seen on
+  const endpoints = new Map();
+  let currentBranch = "";
+  const onEndpoint = (ep) => {
+    const key = `${currentRepo} ${ep.route}`;
+    const entry = endpoints.get(key) ?? { repo: currentRepo, ...ep, branches: new Set() };
+    entry.branches.add(currentBranch);
+    endpoints.set(key, entry);
   };
 
   const targets = local.length ? localTargets(local) : await source.listTargets();
@@ -81,7 +92,8 @@ export async function runAgent(options) {
     log(`scanning ${t.name}: ${changed.length} changed branch(es), ${deleted.length} deleted`);
 
     for (const [branch, sha] of changed) {
-      const items = runBranchChecks(t.dir, sha, rules, onVar);
+      currentBranch = branch;
+      const items = runBranchChecks(t.dir, sha, rules, { repo: t.name, onVar, onEndpoint });
       if (!inventoryOnly) applyBranchResults(state, t.key, branch, items, now);
       summary.branchesScanned++;
     }
@@ -108,7 +120,8 @@ export async function runAgent(options) {
 
   if (inventoryOnly) {
     writeInventory(inventory, outDir);
-    return { state, inventory, summary, emails: [] };
+    writeEndpointInventory(endpoints, outDir);
+    return { state, inventory, endpoints, summary, emails: [] };
   }
 
   // Alerts: new critical findings right away; everything open in the weekly digest.
@@ -195,6 +208,23 @@ function writeInventory(inventory, outDir) {
   if (process.env.GITHUB_STEP_SUMMARY) {
     const md = ["## NEXT_PUBLIC_ inventory", "", "| Variable | Classification | Repos |", "|---|---|---|"]
       .concat(rows.map((r) => `| \`${r.name}\` | ${r.status}${r.severity && r.severity !== "review" ? ` (${r.severity})` : ""} | ${r.repos.length} |`))
+      .join("\n");
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + "\n");
+  }
+}
+
+function writeEndpointInventory(endpoints, outDir) {
+  mkdirSync(outDir, { recursive: true });
+  const rows = [...endpoints.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.route.localeCompare(b.route));
+  const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  const csv = ["repo,endpoint,file,kind,methods,categories,access,issues,branches"]
+    .concat(rows.map((e) => [e.repo, e.route, e.file, e.kind, e.methods.join(" "), e.categories.join(" "), e.access, e.issues, [...e.branches].sort().join(" ")].map(q).join(",")))
+    .join("\n");
+  writeFileSync(join(outDir, "endpoint-inventory.csv"), csv + "\n");
+  log(`inventory: ${rows.length} API endpoint(s) written to ${join(outDir, "endpoint-inventory.csv")}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const md = ["## API endpoints", "", "| Repo | Endpoint | Kind | Calls | Access | Issues |", "|---|---|---|---|---|---|"]
+      .concat(rows.map((e) => `| ${e.repo} | \`${e.route}\` | ${e.kind} | ${e.categories.join(" + ")} | ${e.access} | ${e.issues} |`))
       .join("\n");
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + "\n");
   }
