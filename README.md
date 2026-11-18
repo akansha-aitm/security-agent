@@ -78,7 +78,7 @@ are scanned too, so `git fetch --all` first).
    - Note the Client ID and generate a private key.
 
    Alternative for a quick pilot: a fine-grained personal access token with the same two read permissions,
-   owned by the organisation, stored as the secret `GITHUB_SCAN_TOKEN`. The App is preferred: it does not
+   owned by the organisation, stored as the secret `SCAN_TOKEN`. The App is preferred: it does not
    belong to a person and its tokens last one hour.
 
 3. **Email account.** Alerts are sent from the company `support@` account through the Gmail API, with a

@@ -92,7 +92,7 @@ jobs:
       - name: Run the agent
         env:
           # GitHub App token if configured, otherwise a fine-grained personal access token.
-          GITHUB_SCAN_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_SCAN_TOKEN }}
+          GITHUB_SCAN_TOKEN: ${{ steps.app-token.outputs.token || secrets.SCAN_TOKEN }}  # GitHub forbids secret names starting with GITHUB_
           MODE: >-
             ${{ github.event_name == 'workflow_dispatch' && inputs.mode
             || github.event.schedule == '0 7 * * 1' && 'digest'

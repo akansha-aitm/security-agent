@@ -96,7 +96,7 @@ In `security-agent` on GitHub: Settings > Secrets and variables > Actions.
 
 | Name | Value |
 |---|---|
-| `GITHUB_SCAN_TOKEN` | the fine-grained token |
+| `SCAN_TOKEN` | the fine-grained token (GitHub does not allow secret names starting with `GITHUB_`) |
 | `GMAIL_CLIENT_SECRET` | printed by `npm run gmail-auth` |
 | `GMAIL_REFRESH_TOKEN` | printed by `npm run gmail-auth` |
 
@@ -156,7 +156,7 @@ Check in every email: it starts with "[Pilot mode: this email was meant for ...]
 
 ## 7. Move to the organisation
 
-1. Delete the test token (Settings > Developer settings) and the variables `REPOS` and `GITHUB_SCAN_TOKEN`.
+1. Delete the test token (Settings > Developer settings) and the variable `REPOS` and the secret `SCAN_TOKEN`.
 2. Move the agent's repo into the organisation (Settings > Transfer) or push it to a new private org repo.
 3. An org admin creates the GitHub App (Contents: read, Metadata: read), installs it on all repositories,
    and you set `SCAN_APP_CLIENT_ID` (variable) and `SCAN_APP_PRIVATE_KEY` (secret).
