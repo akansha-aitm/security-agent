@@ -2,20 +2,24 @@
   "_comment": "Rules for the endpoint checks (src/checks/endpoints.mjs). Change by pull request, reviewed by a tech lead. Keys starting with _ are ignored.",
 
   "_publicRoutes": "Routes anyone may call without signing in. A public route is a written decision. * = one path segment, ** = any depth.",
-  "publicRoutes": ["/api/health", "/auth/callback", "/auth/confirm", "/api/auth/[...nextauth]"],
+  "publicRoutes": ["/api/health", "/health", "/healthz", "/auth/callback", "/auth/confirm", "/api/auth/[...nextauth]"],
 
-  "_authHelpers": "Function names that count as a login check when the route calls them. Add each project's own helpers (e.g. requireUser). getSession() does NOT count on the server: it does not verify the token.",
-  "authHelpers": ["getUser", "getClaims", "auth", "currentUser", "getServerSession", "requireUser", "requireAuth", "requireSession", "withAuth", "verifyAuth", "validateRequest", "getAuthenticatedUser"],
+  "_authHelpers": "Function names that count as a login check when the route calls them (Python: also as a decorator or in Depends()/Security()). Add each project's own helpers (e.g. requireUser). getSession() does NOT count on the server: it does not verify the token. FastAPI security schemes (OAuth2PasswordBearer, HTTPBearer, APIKeyHeader...) are recognised without being listed.",
+  "authHelpers": ["getUser", "getClaims", "auth", "currentUser", "getServerSession", "requireUser", "requireAuth", "requireSession", "withAuth", "verifyAuth", "validateRequest", "getAuthenticatedUser",
+    "login_required", "jwt_required", "fresh_jwt_required", "verify_jwt_in_request", "auth_required", "token_required", "requires_auth", "require_auth", "require_user", "require_login", "permission_required", "roles_required", "get_current_user", "get_current_active_user", "verify_token", "verify_api_key", "verify_jwt"],
 
   "_rateLimitHelpers": "Names that count as a rate limit (Upstash Ratelimit and common helper names are also recognised).",
-  "rateLimitHelpers": ["ratelimit", "rateLimit", "checkRateLimit", "limiter", "enforceQuota", "checkQuota"],
+  "rateLimitHelpers": ["ratelimit", "rateLimit", "checkRateLimit", "limiter", "enforceQuota", "checkQuota", "slowapi", "flask_limiter", "RateLimiter", "check_rate_limit", "rate_limit"],
 
   "llm": {
+    "_pythonPackages": "Python modules (and submodules) that mark an endpoint as calling an LLM.",
+    "pythonPackages": ["openai", "anthropic", "google.generativeai", "google.genai", "vertexai", "mistralai", "groq", "cohere", "langchain", "langchain_openai", "langchain_anthropic", "langchain_google_genai", "langchain_community", "litellm", "replicate", "huggingface_hub", "together", "azure.ai.inference", "azure.ai.openai"],
     "packages": ["openai", "@anthropic-ai/sdk", "ai", "@ai-sdk/", "@google/genai", "@google/generative-ai", "@mistralai/mistralai", "groq-sdk", "cohere-ai", "@langchain/", "langchain", "replicate", "@huggingface/inference", "@openrouter/"],
     "hosts": ["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com", "aiplatform.googleapis.com", "api.mistral.ai", "api.groq.com", "api.perplexity.ai", "api.cohere.ai", "api.cohere.com", "openrouter.ai", "api.x.ai", "api.together.xyz", "api.replicate.com"]
   },
 
   "thirdParty": {
+    "pythonPackages": ["stripe", "twilio", "sendgrid", "resend", "slack_sdk", "slack_bolt", "notion_client", "hubspot", "googleapiclient", "github", "msal", "msgraph", "office365", "O365", "firecrawl", "apify_client", "serpapi", "boto3"],
     "packages": ["stripe", "resend", "@sendgrid/", "twilio", "serpapi", "google-search-results-nodejs", "@slack/", "@notionhq/client", "@hubspot/", "googleapis", "@octokit/", "firecrawl", "@mendable/firecrawl-js", "apify-client", "@upstash/qstash"],
     "ignoreHosts": ["localhost", "127.0.0.1", "www.w3.org", "w3.org", "schema.org", "example.com", "json-schema.org"]
   },

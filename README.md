@@ -22,8 +22,15 @@ in an email, a log or its saved state. Rules come from the `ai-to-market-securit
 
 ### API endpoint checks
 
-Every endpoint is found (`app/**/route.ts`, `pages/api/**`, `"use server"` files, `supabase/functions/*`)
-and sorted by what it calls, reading the route and the local files it imports:
+Every endpoint is found and sorted by what it calls, reading the route and the local code it uses:
+
+- **JavaScript** (from the file layout): `app/**/route.ts`, `pages/api/**`, `"use server"` files, `supabase/functions/*`.
+- **Python** (from the code, in `.py` files outside `tests/`): Flask, Quart and Sanic (`@app.route`, `@bp.get`,
+  `add_url_rule`), FastAPI and Starlette (`@router.post`, `add_api_route`, `Route`), aiohttp
+  (`@routes.get`, `app.router.add_post`) and Azure Functions (`@app.route(route=...)`). As for JavaScript, the
+  agent reads the handler, the same-file code it uses and the local modules it imports (two levels).
+
+Categories:
 **LLM** (AI libraries or AI hosts), **third-party** (Stripe, SerpApi, Resend... or any outside URL),
 **container** (our own services: URLs from settings like `WORKER_URL`), or **other**.
 Rules live in [`config/endpoints.json`](config/endpoints.json): approved public routes, login-helper
@@ -37,9 +44,11 @@ names, URL settings, with per-repo additions.
 | third-party / container | timeout on outgoing calls |
 | container | sends a service credential, never the user's headers |
 | Supabase function | `verify_jwt = false` without a login check |
+| Python | login decorators, `Depends(...)`/`Security(...)` (FastAPI security schemes included), router `dependencies=`, Flask `before_request`, aiohttp auth middlewares and the Bot Framework adapter (Teams bots) count as a login check; Azure Functions: `auth_level=ANONYMOUS` without a login check (function keys count as a check) |
 
 These read the source text: "no login check found" means a person should look. A project's own login
-helper (e.g. `requireUser()`) must be added to `authHelpers`, or its routes are reported.
+helper (e.g. `requireUser()`, `check_caller()`) must be added to `authHelpers`, or its routes are reported.
+Python endpoints are named with their methods (`POST /api/messages`).
 
 The same issue on several branches is a single alert that lists the branches. Archived repos and
 forks are skipped, and so is the agent's own repository (its tests plant fake issues on purpose).
@@ -171,3 +180,5 @@ they are visible to anyone with access to this repository.
 - Endpoint checks are text heuristics: custom login helpers, wrappers or URLs built at runtime need
   `config/endpoints.json` entries. Whether a container is itself reachable from the internet is not checked
   (cloud setting, outside the repo). Object ownership ("is this the user's own record?") is not checked.
+  Django URL confs are not read yet, and a login check added by the hosting platform (Azure App Service
+  authentication, an API gateway) is invisible in the code: those endpoints are reported and need a person.

@@ -7,6 +7,7 @@ import { endpointOfFile, loadEndpointRules, runEndpointChecks } from "../src/che
 import { listFiles } from "../src/checks/branch.mjs";
 import { run } from "../src/util.mjs";
 import { EXPECTED_ENDPOINT_FINDINGS, SAMPLE_ROUTES } from "./sample-routes.mjs";
+import { EXPECTED_PY_FINDINGS, SAMPLE_PY_ROUTES } from "./sample-py-routes.mjs";
 
 test("endpointOfFile maps App Router, Pages Router, edge functions; ignores the rest", () => {
   assert.deepEqual(endpointOfFile("app/api/chat/route.ts"), { kind: "app", route: "/api/chat", root: "" });
@@ -83,6 +84,56 @@ test("per-repo config: a project's own login helper and public route are honoure
 
     config.repos = { "acme/web": { authHelpers: ["mustBeSignedIn"], publicRoutes: ["/api/status"] } };
     assert.deepEqual(runEndpointChecks(dir, sha, files, config, { repo: "acme/web" }), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Python endpoints: Flask, FastAPI, Teams bot (aiohttp) and Azure Functions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "secagent-py-"));
+  try {
+    run("git", ["init", "-q", "-b", "main", dir]);
+    for (const [path, text] of Object.entries(SAMPLE_PY_ROUTES)) {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), text.replace(/^\n/, ""));
+    }
+    run("git", ["-C", dir, "add", "-A"]);
+    run("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@corp.test", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "py"]);
+    const sha = run("git", ["-C", dir, "rev-parse", "HEAD"]).trim();
+
+    const seen = [];
+    const items = runEndpointChecks(dir, sha, listFiles(dir, sha), loadEndpointRules(), { repo: "t/py", onEndpoint: (e) => seen.push(e) });
+    const got = {};
+    for (const it of items) {
+      const [, key, label] = it.fp.split("|");
+      (got[label] ??= []).push(key);
+      assert.ok(it.title && it.advice && /\.py:\d+$/.test(it.location), `incomplete finding ${it.fp}`);
+    }
+    for (const k of Object.keys(got)) got[k].sort();
+    assert.deepEqual(got, EXPECTED_PY_FINDINGS);
+
+    const sev = (label, key) => items.find((i) => i.fp === `endpoint|${key}|${label}`).severity;
+    assert.equal(sev("POST /api/chat", "no-auth"), "critical", "calls an LLM");
+    assert.equal(sev("GET /api/preview", "no-auth"), "high");
+    assert.equal(sev("POST /api/trigger", "no-auth"), "critical", "the LLM is reached through the bot module");
+    assert.equal(sev("POST /api/sync", "no-auth"), "critical", "uses the Supabase secret key");
+    assert.match(items.find((i) => i.fp === "endpoint|no-auth|POST /api/sync").title, /ANONYMOUS/);
+
+    const ep = (label) => seen.find((e) => e.route === label);
+    assert.deepEqual(seen.map((e) => e.route).sort(), [
+      "ANY /api/status", "GET /api/preview", "GET /api/users/delete", "GET /health", "GET /items/{item_id}",
+      "POST /admin/reindex", "POST /api/chat", "POST /api/messages", "POST /api/summary", "POST /api/sync",
+      "POST /api/trigger", "POST /v1/ask", "POST /webhooks/stripe",
+    ]);
+    assert.equal(ep("POST /api/summary").issues, 0);
+    assert.equal(ep("POST /api/summary").access, "login check");
+    assert.equal(ep("GET /items/{item_id}").access, "login check", "FastAPI security scheme");
+    assert.match(ep("POST /admin/reindex").access, /^login check/, "router-level dependencies=[Depends(...)]");
+    assert.equal(ep("POST /api/messages").access, "Bot Framework token check");
+    assert.equal(ep("ANY /api/status").access, "Azure function key");
+    assert.equal(ep("GET /health").access, "public (approved)");
+    assert.deepEqual(ep("POST /api/messages").categories, ["llm"]);
+    assert.deepEqual([ep("POST /api/chat").kind, ep("POST /v1/ask").kind, ep("POST /api/messages").kind, ep("POST /api/sync").kind], ["flask", "fastapi", "aiohttp", "azure-function"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
