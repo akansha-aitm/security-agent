@@ -2,9 +2,9 @@ name: security-scan
 
 on:
   schedule:
-    - cron: "17 * * * *" # every hour: scan branches that changed, alert new critical findings
-    - cron: "0 2 * * *" # every night: full rescan (picks up allowlist and rule changes)
-    - cron: "0 7 * * 1" # Monday 07:00 UTC: weekly digest to every repo owner
+    - cron: "17 * * * *" # every hour: scan dev/ branches that changed, email every new finding to the tech leads
+    - cron: "0 2 * * *" # every night: full rescan of dev/ branches (picks up allowlist and rule changes)
+    - cron: "0 7 * * 1" # Monday 07:00 UTC: weekly digest to the tech leads
   workflow_dispatch:
     inputs:
       mode:
@@ -37,6 +37,7 @@ jobs:
       GITHUB_OWNER: ${{ vars.SCAN_GITHUB_OWNER || github.repository_owner }}
       REPOS: ${{ vars.REPOS }}
       EXCLUDE_REPOS: ${{ vars.EXCLUDE_REPOS }}
+      SCAN_BRANCH_PREFIXES: ${{ vars.SCAN_BRANCH_PREFIXES }} # empty = dev/ only
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASS: ${{ secrets.SMTP_PASS }}
       GMAIL_CLIENT_ID: ${{ vars.GMAIL_CLIENT_ID }}
@@ -45,9 +46,8 @@ jobs:
       MAIL_FROM: ${{ vars.MAIL_FROM }}
       MAIL_REPLY_TO: ${{ vars.MAIL_REPLY_TO }}
       SEND_EMAILS: ${{ vars.SEND_EMAILS }}
-      REDIRECT_EMAILS_TO: ${{ vars.REDIRECT_EMAILS_TO }}
-      FALLBACK_EMAIL: ${{ vars.FALLBACK_EMAIL }}
-      ALLOWED_EMAIL_DOMAINS: ${{ vars.ALLOWED_EMAIL_DOMAINS }}
+      ALERT_EMAILS: ${{ vars.ALERT_EMAILS }} # the tech leads, comma-separated
+      REDIRECT_EMAILS_TO: ${{ vars.REDIRECT_EMAILS_TO }} # pilot: every email goes to this address instead
       GITLEAKS_VERSION: "8.30.1"
       GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
@@ -82,12 +82,13 @@ jobs:
           permission-contents: read
           permission-metadata: read
 
+      # v2: the saved state started fresh when scanning moved to dev/ branches only.
       - name: Restore saved state
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .state
-          key: security-agent-state-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: security-agent-state-
+          key: security-agent-state-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: security-agent-state-v2-
 
       - name: Run the agent
         env:
@@ -112,4 +113,4 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .state
-          key: security-agent-state-${{ github.run_id }}-${{ github.run_attempt }}
+          key: security-agent-state-v2-${{ github.run_id }}-${{ github.run_attempt }}

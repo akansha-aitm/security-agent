@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // CLI entry point. Configuration comes from environment variables (GitHub Actions secrets/variables).
 //
-//   node src/index.mjs                       scan changed branches, alert new critical findings
-//   node src/index.mjs --full                rescan every branch (after a rule/allowlist change)
-//   node src/index.mjs --digest              also send the weekly digest
+//   node src/index.mjs                       scan changed dev/ branches, email every new finding to the tech leads
+//   node src/index.mjs --full                rescan every dev/ branch (after a rule/allowlist change)
+//   node src/index.mjs --digest              send the weekly digest instead
 //   node src/index.mjs --inventory           list NEXT_PUBLIC_ variables only (no alerts)
 //   node src/index.mjs --local <repo> --dry-run    test on a local repository, emails written to out/
 import { parseArgs } from "node:util";
@@ -47,9 +47,11 @@ try {
     outDir: values.out,
     workDir: process.env.WORK_DIR ?? ".work",
     source: sourceConfig(),
+    // Branches in scope: SCAN_BRANCH_PREFIXES (comma-separated, "*" = all), dev/ by default.
+    branchPrefixes: list(process.env.SCAN_BRANCH_PREFIXES || "dev/"),
     settings: {
-      allowedDomains: list(process.env.ALLOWED_EMAIL_DOMAINS),
-      fallback: process.env.FALLBACK_EMAIL?.trim().toLowerCase() || null,
+      // Every email goes to all tech leads; REDIRECT_EMAILS_TO sends everything to one address while testing.
+      recipients: list(process.env.ALERT_EMAILS),
       redirectTo: process.env.REDIRECT_EMAILS_TO?.trim() || null,
     },
   });

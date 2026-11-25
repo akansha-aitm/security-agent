@@ -1,13 +1,14 @@
-// Checks that cover the whole git history of a repository (every commit on every branch).
+// Checks that cover the git history of the branches in scope (every commit reachable from them).
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git, run, warn } from "../util.mjs";
 import { isEnvFile } from "./branch.mjs";
 
-/** .env files that were added at some point in history and are no longer on any branch tip. */
-export function envFilesInHistory(dir, filesAtTips) {
-  const out = git(dir, ["log", "--all", "--diff-filter=A", "--name-only", "--format=%x01%h%x09%aI"], { allowFail: true }) ?? "";
+/** .env files that were added at some point in history and are no longer on any branch tip.
+ * revs: the branch tips to walk back from (default: every ref). */
+export function envFilesInHistory(dir, filesAtTips, revs = ["--all"]) {
+  const out = git(dir, ["log", ...revs, "--diff-filter=A", "--name-only", "--format=%x01%h%x09%aI"], { allowFail: true }) ?? "";
   const first = new Map(); // path -> oldest commit that added it
   let commit = null;
   for (const line of out.split("\n")) {
@@ -36,10 +37,10 @@ export function envFilesInHistory(dir, filesAtTips) {
 }
 
 /**
- * Runs gitleaks over the full history of all branches. Returns null when gitleaks is not
- * available, so that existing findings are not wrongly marked as fixed.
+ * Runs gitleaks over the history of the given branch tips (default: every ref). Returns null when
+ * gitleaks is not available, so that existing findings are not wrongly marked as fixed.
  */
-export function gitleaksScan(dir, bin = process.env.GITLEAKS_BIN ?? "gitleaks") {
+export function gitleaksScan(dir, revs = null, bin = process.env.GITLEAKS_BIN ?? "gitleaks") {
   if (run(bin, ["version"], { allowFail: true }) === null) {
     warn(`gitleaks not found (${bin}): secret scan skipped`);
     return null;
@@ -63,6 +64,7 @@ export function gitleaksScan(dir, bin = process.env.GITLEAKS_BIN ?? "gitleaks") 
       "--ignore-gitleaks-allow",
       "--report-format", "json",
       "--report-path", report,
+      ...(revs?.length ? ["--log-opts", `--full-history ${revs.join(" ")}`] : []),
       dir,
     ]);
     const leaks = JSON.parse(readFileSync(report, "utf8") || "[]");

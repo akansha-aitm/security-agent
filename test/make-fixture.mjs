@@ -1,4 +1,5 @@
 // Creates a throwaway git repository with planted security issues on several branches.
+// Only dev/ branches are in scope; main and feature/old are there to prove they are ignored.
 // Fake keys are generated at runtime so that this file itself contains nothing secret-shaped.
 //   node test/make-fixture.mjs [target-dir]
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -45,7 +46,6 @@ export function makeFixture(target = mkdtempSync(join(tmpdir(), "secagent-fixtur
   // main: old create-next-app .gitignore (does not ignore .env), legacy anon key, next.config env key
   write("package.json", JSON.stringify({ name: "fixture-app", private: true }, null, 2));
   write(".gitignore", "node_modules\n.next\n.env*.local\n");
-  write("CODEOWNERS", "# owners\n* tech.lead@example.com\n");
   write(
     "src/lib/supabase.ts",
     "export const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;\nexport const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;\n",
@@ -60,8 +60,8 @@ export function makeFixture(target = mkdtempSync(join(tmpdir(), "secagent-fixtur
   g("rm", "-q", ".env.production");
   commit("remove prod env");
 
-  // feature/ai: AI key exposed with NEXT_PUBLIC_, an unknown public var, a committed .env
-  g("checkout", "-q", "-b", "feature/ai");
+  // dev/ai: AI key exposed with NEXT_PUBLIC_, an unknown public var, a committed .env
+  g("checkout", "-q", "-b", "dev/ai");
   write(
     "src/lib/ai.ts",
     "const key = process.env.NEXT_PUBLIC_OPENAI_API_KEY;\nconst ph = process.env.NEXT_PUBLIC_POSTHOG_KEY;\nexport { key, ph };\n",
@@ -69,14 +69,20 @@ export function makeFixture(target = mkdtempSync(join(tmpdir(), "secagent-fixtur
   write(".env", `NEXT_PUBLIC_OPENAI_API_KEY=${fakeOpenAiKey()}\nNEXT_PUBLIC_SUPABASE_KEY=${fakeServiceRoleJwt()}\n`);
   commit("ai feature");
 
-  // feature/clean: everything done right
+  // dev/clean: everything done right
   g("checkout", "-q", "main");
-  g("checkout", "-q", "-b", "feature/clean");
+  g("checkout", "-q", "-b", "dev/clean");
   write(".gitignore", "node_modules\n.next\n.env*\n!.env.example\n");
   write("src/lib/supabase.ts", "export const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;\nexport const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;\n");
   write("next.config.js", "module.exports = {};\n");
   write(".env.example", "NEXT_PUBLIC_SUPABASE_URL=\nNEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=\n");
   commit("clean setup");
+
+  // feature/old: out of scope (not a dev/ branch), so its critical issue must never be reported
+  g("checkout", "-q", "main");
+  g("checkout", "-q", "-b", "feature/old");
+  write("src/lib/pay.ts", "export const k = process.env.NEXT_PUBLIC_STRIPE_SECRET;\n");
+  commit("old feature");
 
   g("checkout", "-q", "main");
   return dir;

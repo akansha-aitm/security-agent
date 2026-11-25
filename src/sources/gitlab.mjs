@@ -2,8 +2,6 @@
 import { scrub } from "../util.mjs";
 import { syncBareClone } from "./clone.mjs";
 
-const BOT_USER_RE = /^(project|group)_\d+_bot/i;
-
 export function createGitLabSource({ url = "https://gitlab.com", token, group, repos = [], exclude = [] }) {
   if (!token) throw new Error("GITLAB_TOKEN is not set");
   if (!group) throw new Error("GITLAB_GROUP is not set");
@@ -27,13 +25,10 @@ export function createGitLabSource({ url = "https://gitlab.com", token, group, r
     return items;
   }
 
-  const toUser = (u) => ({ username: u.username, name: u.name ?? "", email: u.public_email || null });
-  const getUser = async (id) => toUser((await request(`/users/${id}`)).body);
   const matches = (p, list) => list.includes(p.path_with_namespace.toLowerCase()) || list.includes(String(p.id));
 
   return {
     kind: "gitlab",
-    ownerRoleLabel: "a direct Maintainer of this project in GitLab",
 
     async listTargets() {
       let list = (
@@ -56,19 +51,6 @@ export function createGitLabSource({ url = "https://gitlab.com", token, group, r
       return Object.fromEntries(branches.map((b) => [b.name, b.commit.id]));
     },
 
-    syncClone: (target, dir) => syncBareClone(target.cloneUrl, dir, `oauth2:${token}`),
-
-    async findUser(username) {
-      const found = (await request("/users", { username })).body[0];
-      return found ? getUser(found.id) : null;
-    },
-
-    /** Direct members only: inherited group members say nothing about who owns this project. */
-    async platformOwners(target) {
-      const members = (await all(`/projects/${target.ref}/members`)).filter(
-        (m) => m.access_level >= 40 && m.state === "active" && !BOT_USER_RE.test(m.username),
-      );
-      return Promise.all(members.slice(0, 5).map((m) => getUser(m.id)));
-    },
+    syncClone: (target, dir, branches) => syncBareClone(target.cloneUrl, dir, `oauth2:${token}`, branches),
   };
 }

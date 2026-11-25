@@ -35,11 +35,6 @@ export function createGitHubSource({ apiUrl = "https://api.github.com", token, o
     return items;
   }
 
-  const findUser = async (username) => {
-    const { body } = await request(`${api}/users/${encodeURIComponent(username)}`);
-    return body ? { username: body.login, name: body.name ?? "", email: body.email ?? null } : null;
-  };
-
   /** All repos of the owner that the token can read. */
   async function listOwnerRepos() {
     const { body: account } = await request(`${api}/users/${encodeURIComponent(owner)}`);
@@ -66,7 +61,6 @@ export function createGitHubSource({ apiUrl = "https://api.github.com", token, o
 
   return {
     kind: "github",
-    ownerRoleLabel: "an admin or maintainer collaborator on this GitHub repository",
 
     async listTargets() {
       let list = (await listOwnerRepos()).filter((r) => !r.archived && !r.fork && !r.disabled);
@@ -87,17 +81,6 @@ export function createGitHubSource({ apiUrl = "https://api.github.com", token, o
       return Object.fromEntries(branches.map((b) => [b.name, b.commit.sha]));
     },
 
-    syncClone: (target, dir) => syncBareClone(target.cloneUrl, dir, `x-access-token:${token}`),
-
-    findUser,
-
-    /** Users added directly to the repo as admin or maintain. Team-based access is not expanded yet. */
-    async platformOwners(target) {
-      const collaborators = await all(`/repos/${target.ref}/collaborators`, { affiliation: "direct" });
-      const owners = collaborators.filter(
-        (c) => c.type === "User" && (["admin", "maintain"].includes(c.role_name) || c.permissions?.admin || c.permissions?.maintain),
-      );
-      return (await Promise.all(owners.slice(0, 5).map((c) => findUser(c.login)))).filter(Boolean);
-    },
+    syncClone: (target, dir, branches) => syncBareClone(target.cloneUrl, dir, `x-access-token:${token}`, branches),
   };
 }

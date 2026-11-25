@@ -1,5 +1,5 @@
 // Planted API routes for the endpoint checks: a safe and an unsafe version of each kind.
-// Used by the unit tests and by add-sample-routes.mjs (sample repo, branch feature/api-routes).
+// Used by the unit tests and by add-sample-routes.mjs (sample repo, branch dev/api-routes).
 // No real keys: everything is read from environment variables that do not exist.
 
 const AUTH = `  const supabase = await createClient();

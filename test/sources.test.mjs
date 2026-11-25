@@ -1,11 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createGitHubSource } from "../src/sources/github.mjs";
-import { resolveOwners } from "../src/owners.mjs";
-import { run } from "../src/util.mjs";
 
 const json = (body, headers = {}) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
 
@@ -50,8 +45,6 @@ test("GitHub source: organisations and personal accounts, paging, filters", asyn
     assert.deepEqual(targets.map((t) => t.name), ["acme/web"]);
     assert.equal(targets[0].key, "github:1");
     assert.deepEqual(await src.listBranches(targets[0]), { main: "abc", dev: "def" });
-    assert.deepEqual(await src.platformOwners(targets[0]), [{ username: "lead", name: "Tech Lead", email: null }]);
-    assert.equal(await src.findUser("ghost"), null);
     assert.ok(seen.every((r) => r.auth === "Bearer t0ken-value"));
 
     const only = createGitHubSource({ apiUrl: "https://api.example.test", token: "x", owner: "acme", repos: ["security-agent"] });
@@ -61,46 +54,5 @@ test("GitHub source: organisations and personal accounts, paging, filters", asyn
     assert.deepEqual((await personal.listTargets()).map((t) => t.name), ["akan/sample"]);
   } finally {
     globalThis.fetch = realFetch;
-  }
-});
-
-test("owners: GitHub noreply commit emails are mapped to work emails", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "secagent-owners-"));
-  try {
-    run("git", ["init", "-q", "-b", "main", dir]);
-    const commitAs = (name, email, n) => {
-      for (let i = 0; i < n; i++) {
-        writeFileSync(join(dir, `f-${email}-${i}.txt`), String(i));
-        run("git", ["-C", dir, "add", "-A"]);
-        run("git", ["-C", dir, "-c", `user.name=${name}`, "-c", `user.email=${email}`, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "c"]);
-      }
-    };
-    commitAs("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com", 5);
-    commitAs("Alice", "123+alice@users.noreply.github.com", 3);
-    commitAs("Bob", "bob@corp.test", 1);
-    const sha = run("git", ["-C", dir, "rev-parse", "HEAD"]).trim();
-
-    // No CODEOWNERS, no provider: top human committer is Alice, mapped through the directory.
-    let owners = await resolveOwners({ dir, defaultSha: sha, directory: { alice: "alice@corp.test" } });
-    assert.deepEqual([owners.source, owners.emails], ["committer", ["alice@corp.test"]]);
-
-    // Alice cannot be mapped: fall through to the next committer with a real email.
-    owners = await resolveOwners({ dir, defaultSha: sha, directory: {} });
-    assert.deepEqual(owners.emails, ["bob@corp.test"]);
-
-    // CODEOWNERS with @username, resolved through the provider's public email.
-    writeFileSync(join(dir, "CODEOWNERS"), "* @carol\n");
-    run("git", ["-C", dir, "add", "-A"]);
-    run("git", ["-C", dir, "-c", "user.name=Bob", "-c", "user.email=bob@corp.test", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "owners"]);
-    const sha2 = run("git", ["-C", dir, "rev-parse", "HEAD"]).trim();
-    const provider = {
-      findUser: async (u) => (u === "carol" ? { username: "carol", name: "Carol", email: "carol@corp.test" } : null),
-      platformOwners: async () => [],
-      ownerRoleLabel: "x",
-    };
-    owners = await resolveOwners({ dir, defaultSha: sha2, provider, target: { name: "r" }, directory: {} });
-    assert.deepEqual([owners.source, owners.emails], ["codeowners", ["carol@corp.test"]]);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
   }
 });

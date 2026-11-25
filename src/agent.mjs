@@ -1,4 +1,4 @@
-// Orchestrates one run: pick repos, scan changed branches, update findings, send alerts.
+// Orchestrates one run: pick repos, scan changed dev/ branches, update findings, email the tech leads.
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createGitHubSource } from "./sources/github.mjs";
@@ -6,18 +6,17 @@ import { createGitLabSource } from "./sources/gitlab.mjs";
 import { isEnvFile, listFiles, runBranchChecks } from "./checks/branch.mjs";
 import { loadEndpointRules } from "./checks/endpoints.mjs";
 import { envFilesInHistory, gitleaksScan } from "./checks/history.mjs";
-import { loadDirectory, resolveOwners } from "./owners.mjs";
 import { loadRules } from "./rules.mjs";
 import { applyBranchResults, applyRepoResults, closeFixed, forgetBranches, loadState, saveState } from "./state.mjs";
 import { buildEmails, deliver } from "./notify.mjs";
-import { SEVERITIES, git, log, warn } from "./util.mjs";
+import { SEVERITIES, branchFilter, git, log, warn } from "./util.mjs";
 
 const RESOLVED_RETENTION_DAYS = 90;
 
 /**
  * options:
  *   local: string[]        scan these local repositories instead of GitHub/GitLab (testing)
- *   full: boolean          rescan every branch even if unchanged (after a rule or allowlist change)
+ *   full: boolean          rescan every branch in scope even if unchanged (after a rule or allowlist change)
  *   digest: boolean        send the weekly digest of all open findings
  *   inventory: boolean     only list NEXT_PUBLIC_ variables and API endpoints, no findings, no emails
  *   dryRun: boolean        write emails to outDir instead of sending. Scan progress is saved, but
@@ -26,7 +25,8 @@ const RESOLVED_RETENTION_DAYS = 90;
  *   statePath, outDir, workDir, allowlistPath, endpointsPath
  *   source: { kind: "github", org, token, apiUrl, repos[], exclude[] }
  *        or { kind: "gitlab", group, token, url, repos[], exclude[] }   (ignored with local)
- *   settings: { allowedDomains[], fallback, redirectTo }
+ *   branchPrefixes: string[]  branches in scope (default ["dev/"]; "*" = all branches)
+ *   settings: { recipients[], redirectTo }   every email goes to all recipients (the tech leads)
  */
 export async function runAgent(options) {
   const { local = [], full = false, digest = false, inventory: inventoryOnly = false, dryRun = false } = options;
@@ -36,7 +36,8 @@ export async function runAgent(options) {
   rules.endpoints = loadEndpointRules(options.endpointsPath);
   const state = loadState(statePath);
   const source = local.length ? null : createSource(options.source);
-  const directory = loadDirectory(options.userEmailsPath);
+  const inScope = branchFilter(options.branchPrefixes ?? ["dev/"]);
+  const pick = (branches) => Object.fromEntries(Object.entries(branches).filter(([b]) => inScope(b)));
   const summary = { repos: 0, reposScanned: 0, branchesScanned: 0, errors: 0, emailsSent: 0, undeliverable: 0 };
 
   // NEXT_PUBLIC_ inventory: name -> { classification, repos }
@@ -72,50 +73,62 @@ export async function runAgent(options) {
   }
 
   async function scanTarget(t) {
-    const prev = state.repos[t.key]?.branches ?? {};
+    const prevRepo = state.repos[t.key];
+    const prev = prevRepo?.branches ?? {};
     const force = full || inventoryOnly;
+    let branches;
 
     if (source) {
-      // Ask the API first, so unchanged repos are not even fetched.
-      const remote = await source.listBranches(t);
-      if (!Object.keys(remote).length) return; // empty repository
+      // Ask the API first, so unchanged repos and repos without branches in scope are not even fetched.
+      const remote = pick(await source.listBranches(t));
+      if (!Object.keys(remote).length) return dropRepo(t, prev);
       if (!force && sameBranches(prev, remote)) return;
       t.dir = join(workDir, "repos", `${t.key.replace(":", "-")}.git`);
-      source.syncClone(t, t.dir);
+      source.syncClone(t, t.dir, Object.keys(remote));
+      branches = pick(listBranches(t.dir, false));
+    } else {
+      branches = pick(listBranches(t.dir, true));
+      if (!Object.keys(branches).length) return dropRepo(t, prev);
     }
 
-    const branches = listBranches(t.dir, !source);
     const changed = Object.entries(branches).filter(([b, sha]) => force || prev[b] !== sha);
     const deleted = Object.keys(prev).filter((b) => !(b in branches));
     if (!changed.length && !deleted.length) return;
     summary.reposScanned++;
     log(`scanning ${t.name}: ${changed.length} changed branch(es), ${deleted.length} deleted`);
 
+    const tips = { ...(prevRepo?.tips ?? {}) };
+    for (const b of deleted) delete tips[b];
     for (const [branch, sha] of changed) {
       currentBranch = branch;
       const items = runBranchChecks(t.dir, sha, rules, { repo: t.name, onVar, onEndpoint });
       if (!inventoryOnly) applyBranchResults(state, t.key, branch, items, now);
+      // What was pushed: shown at the top of the email, with links to the commit and the changes.
+      if (prev[branch] !== sha) tips[branch] = { sha, prevSha: prev[branch] ?? null, ...commitInfo(t.dir, sha), scannedAt: now };
       summary.branchesScanned++;
     }
     if (inventoryOnly) return;
     forgetBranches(state, t.key, deleted);
 
-    // History checks cover every commit of every branch.
-    const envAtTips = new Set(Object.values(branches).flatMap((sha) => listFiles(t.dir, sha).filter(isEnvFile)));
-    applyRepoResults(state, t.key, ["env-history"], envFilesInHistory(t.dir, envAtTips), now);
-    const leaks = gitleaksScan(t.dir);
+    // History checks cover every commit reachable from the branches in scope.
+    const revs = Object.values(branches);
+    const envAtTips = new Set(revs.flatMap((sha) => listFiles(t.dir, sha).filter(isEnvFile)));
+    applyRepoResults(state, t.key, ["env-history"], envFilesInHistory(t.dir, envAtTips, revs), now);
+    const leaks = gitleaksScan(t.dir, revs);
     if (leaks) applyRepoResults(state, t.key, ["secret"], leaks, now);
     closeFixed(state, t.key, now);
 
-    const defaultBranch = t.defaultBranch ?? localDefaultBranch(t.dir, branches);
-    const owners = await resolveOwners({
-      dir: t.dir,
-      defaultSha: branches[defaultBranch],
-      provider: source,
-      target: source ? t : null,
-      directory,
-    });
-    state.repos[t.key] = { name: t.name, webUrl: t.webUrl, branches, owners, scannedAt: now };
+    state.repos[t.key] = { name: t.name, webUrl: t.webUrl, branches, tips, scannedAt: now };
+  }
+
+  /** The repo has no branch in scope (any more): everything found on it is closed. */
+  function dropRepo(t, prev) {
+    if (inventoryOnly || !state.repos[t.key]) return;
+    forgetBranches(state, t.key, Object.keys(prev));
+    applyRepoResults(state, t.key, ["env-history", "secret"], [], now);
+    closeFixed(state, t.key, now);
+    state.repos[t.key] = { ...state.repos[t.key], branches: {}, tips: {}, scannedAt: now };
+    log(`${t.name}: no branch in scope any more, its findings are closed`);
   }
 
   if (inventoryOnly) {
@@ -124,16 +137,17 @@ export async function runAgent(options) {
     return { state, inventory, endpoints, summary, emails: [] };
   }
 
-  // Alerts: new critical findings right away; everything open in the weekly digest.
+  // Alerts: every new finding right away (one email to the tech leads); everything open in the weekly digest.
   const all = Object.values(state.findings);
   const open = all.filter((f) => f.status === "open");
   let batch;
   if (digest) {
     const since = state.lastDigestAt;
     const resolvedSince = all.filter((f) => f.status === "resolved" && (!since || f.resolvedAt > since));
-    batch = buildEmails(open, { state, kind: "digest", settings, resolvedSince });
+    batch = buildEmails(open, { state, kind: "digest", settings, resolvedSince, now });
   } else {
-    batch = buildEmails(open.filter((f) => f.severity === "critical" && !f.alertedAt), { state, kind: "immediate", settings });
+    const fresh = open.filter((f) => !f.alertedAt);
+    batch = buildEmails(fresh, { state, kind: "immediate", settings, now, stillOpen: open.length - fresh.length });
   }
   const send = options.send ?? deliver;
   const delivered = await send(batch.emails, { dryRun, outDir, redirectTo: settings.redirectTo });
@@ -145,7 +159,7 @@ export async function runAgent(options) {
   summary.dryRun = dryRun;
   summary.undeliverable = batch.undeliverable.length;
   if (batch.undeliverable.length)
-    warn(`${batch.undeliverable.length} finding(s) have no recipient: set FALLBACK_EMAIL or add CODEOWNERS files`);
+    warn(`${batch.undeliverable.length} finding(s) not emailed: set the variable ALERT_EMAILS (or REDIRECT_EMAILS_TO while testing)`);
 
   // Forget findings fixed a long time ago.
   const cutoff = new Date(Date.parse(now) - RESOLVED_RETENTION_DAYS * 86400e3).toISOString();
@@ -177,17 +191,19 @@ function listBranches(dir, includeRemotes) {
     if (ref.startsWith("refs/heads/")) heads[ref.slice(11)] = sha;
     else if (!ref.endsWith("/HEAD")) remotes[ref.slice(13)] = sha;
   }
+  // Remote-tracking branches are listed under their branch name (origin/dev/x -> dev/x).
   for (const [name, sha] of Object.entries(remotes)) {
     const short = name.slice(name.indexOf("/") + 1);
-    if (!(short in heads)) heads[name] = sha;
+    if (!(short in heads)) heads[short] = sha;
   }
   return heads;
 }
 
-function localDefaultBranch(dir, branches) {
-  const head = git(dir, ["symbolic-ref", "--short", "HEAD"], { allowFail: true })?.trim();
-  if (head && head in branches) return head;
-  return ["main", "master"].find((b) => b in branches) ?? Object.keys(branches)[0];
+/** Author, date and message of a commit, for the "what was pushed" part of the email. */
+function commitInfo(dir, sha) {
+  const out = git(dir, ["log", "-1", "--format=%an%x09%aI%x09%s", sha], { allowFail: true })?.trim() ?? "";
+  const [author = "", date = "", subject = ""] = out.split("	");
+  return { author, date, subject: subject.length > 100 ? `${subject.slice(0, 97)}...` : subject };
 }
 
 function sameBranches(a, b) {

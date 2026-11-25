@@ -1,6 +1,7 @@
 // Creates a realistic Next.js sample repository with planted security issues, to test the agent
 // end to end on GitHub. All keys are fake and generated at runtime.
-//   node test/make-sample-app.mjs <target-dir> --owner you@company.com
+//   node test/make-sample-app.mjs <target-dir> [--author you@company.com]
+// Only the dev/ branches are scanned; main is there as the base they start from.
 // Then push it to a PRIVATE GitHub repository with all branches (see docs/TESTING.md).
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -16,13 +17,9 @@ const alnum = (n) => {
 const fakeGitHubToken = () => ["gh", "p_", alnum(36)].join("");
 const fakeSupabaseSecret = () => ["sb", "_secret_", alnum(32)].join("");
 
-const { values, positionals } = parseArgs({ allowPositionals: true, options: { owner: { type: "string" } } });
+const { values, positionals } = parseArgs({ allowPositionals: true, options: { author: { type: "string" } } });
 const target = resolve(positionals[0] ?? "../security-agent-sample-app");
-const owner = values.owner;
-if (!owner || !owner.includes("@")) {
-  console.error("usage: node test/make-sample-app.mjs <target-dir> --owner you@company.com");
-  process.exit(1);
-}
+const owner = values.author ?? "sample-app@example.com"; // commit author only: alerts go to the tech leads
 if (existsSync(target)) {
   console.error(`${target} already exists: delete it first or choose another folder`);
   process.exit(1);
@@ -49,7 +46,6 @@ write(
   JSON.stringify({ name: "security-agent-sample-app", private: true, scripts: { dev: "next dev" }, dependencies: { next: "16.0.0", react: "19.2.0", "react-dom": "19.2.0" } }, null, 2) + "\n",
 );
 write(".gitignore", "\nnode_modules\n.next\n# create-next-app used to ignore only local env files\n.env*.local\n");
-write(".github/CODEOWNERS", `\n# Security alerts for this repository go to:\n* ${owner}\n`);
 write(
   "README.md",
   "\n# Security agent sample app\n\nTest repository with **planted, fake** security issues. Nothing here is a real key.\nUsed to check that the security agent detects and reports each issue.\n",
@@ -79,19 +75,19 @@ commit("Add local config");
 g("rm", "-q", ".env.local");
 commit("Remove local config");
 
-// ---------------------------------------------------------------- feature/ai-chat
-g("checkout", "-q", "-b", "feature/ai-chat");
+// ---------------------------------------------------------------- dev/ai-chat
+g("checkout", "-q", "-b", "dev/ai-chat");
 write(
   "components/chat.tsx",
   "\n\"use client\";\n// PLANTED (critical): the OpenAI key is shipped to every visitor's browser\nexport async function ask(prompt: string) {\n  const res = await fetch(\"https://api.openai.com/v1/chat/completions\", {\n    method: \"POST\",\n    headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_API_KEY}` },\n    body: JSON.stringify({ model: \"gpt-5\", messages: [{ role: \"user\", content: prompt }] }),\n  });\n  return res.json();\n}\n",
 );
-// PLANTED (critical): .env committed on a feature branch
+// PLANTED (critical): .env committed on a dev/ branch
 write(".env", `\nNEXT_PUBLIC_OPENAI_API_KEY=${fakeOpenAiKey()}\n`);
 commit("AI chat prototype");
 
-// ---------------------------------------------------------------- feature/payments
+// ---------------------------------------------------------------- dev/payments
 g("checkout", "-q", "main");
-g("checkout", "-q", "-b", "feature/payments");
+g("checkout", "-q", "-b", "dev/payments");
 write(
   "lib/stripe.ts",
   "\n// PLANTED (critical): a secret key with the NEXT_PUBLIC_ prefix\nexport const stripeKey = process.env.NEXT_PUBLIC_STRIPE_SECRET_KEY;\n",
@@ -106,9 +102,9 @@ write(
 );
 commit("Payments and summaries");
 
-// ---------------------------------------------------------------- feature/clean
+// ---------------------------------------------------------------- dev/clean
 g("checkout", "-q", "main");
-g("checkout", "-q", "-b", "feature/clean");
+g("checkout", "-q", "-b", "dev/clean");
 write(".gitignore", "\nnode_modules\n.next\n.env*\n!.env.example\n");
 write("next.config.mjs", "\n/** @type {import('next').NextConfig} */\nconst nextConfig = {};\n\nexport default nextConfig;\n");
 write(
@@ -121,6 +117,6 @@ commit("Fix env handling");
 
 g("checkout", "-q", "main");
 console.log(`Sample app created in ${target}`);
-console.log("Branches: main, feature/ai-chat, feature/payments, feature/clean");
+console.log("Branches: main, dev/ai-chat, dev/payments, dev/clean");
 console.log("Optional: node test/add-sample-routes.mjs <dir> adds the API-route examples.");
 console.log("Next: create a PRIVATE GitHub repo and push all branches (see docs/TESTING.md).");

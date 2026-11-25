@@ -1,7 +1,7 @@
 # AITM security agent (prototype)
 
-Scans every branch of every repository in the company's GitHub organisation for exposed secrets and
-unprotected API endpoints, and emails the repository's tech lead. It runs on GitHub Actions and only reads the repositories.
+Scans the `dev/` branches of every repository in the company's GitHub organisation for exposed secrets and
+unprotected API endpoints, and emails the tech leads. It runs on GitHub Actions and only reads the repositories.
 (GitLab support is built in, behind `SOURCE=gitlab`, for a later phase.)
 
 It never runs a scanned repository's code (no install, build or test), and never puts a secret value
@@ -11,14 +11,14 @@ in an email, a log or its saved state. Rules come from the `ai-to-market-securit
 
 | Check | Where | Severity |
 |---|---|---|
-| `NEXT_PUBLIC_*` variables against [`config/public-env-allowlist.json`](config/public-env-allowlist.json) | every branch | critical / high by name pattern, low if deprecated, "to be validated" if unknown |
-| `NEXT_PUBLIC_*` values in committed `.env` files that look like secrets (`sk-`, `sb_secret_`, service_role JWT...) | every branch | critical |
-| `.env` files committed | every branch | critical |
-| `.env` files deleted but still in history | full history | critical |
-| Root `.gitignore` does not exclude `.env*` | every branch | high |
-| `next.config` `env` key (copies values into the browser) | every branch | high |
-| Secrets anywhere in history (gitleaks, default rules) | full history | critical |
-| API endpoints: login checks and rules per kind (below) | every branch | critical to medium |
+| `NEXT_PUBLIC_*` variables against [`config/public-env-allowlist.json`](config/public-env-allowlist.json) | every `dev/` branch | critical / high by name pattern, low if deprecated, "to be validated" if unknown |
+| `NEXT_PUBLIC_*` values in committed `.env` files that look like secrets (`sk-`, `sb_secret_`, service_role JWT...) | every `dev/` branch | critical |
+| `.env` files committed | every `dev/` branch | critical |
+| `.env` files deleted but still in history | history of the `dev/` branches | critical |
+| Root `.gitignore` does not exclude `.env*` | every `dev/` branch | high |
+| `next.config` `env` key (copies values into the browser) | every `dev/` branch | high |
+| Secrets anywhere in history (gitleaks, default rules) | history of the `dev/` branches | critical |
+| API endpoints: login checks and rules per kind (below) | every `dev/` branch | critical to medium |
 
 ### API endpoint checks
 
@@ -44,29 +44,30 @@ helper (e.g. `requireUser()`) must be added to `authHelpers`, or its routes are 
 The same issue on several branches is a single alert that lists the branches. Archived repos and
 forks are skipped, and so is the agent's own repository (its tests plant fake issues on purpose).
 
+## Which branches
+
+Only branches whose name starts with `dev/` (any capitalisation: `dev/chat-export`, `Dev/Login`) are
+scanned. Devs push their work there; `main`, `feature/...` and other branches are ignored. The history
+checks cover every commit reachable from the `dev/` branches, which includes the history of `main` they
+started from. When a `dev/` branch is deleted (merged), its issues are closed. Change the scope with the
+variable `SCAN_BRANCH_PREFIXES` (comma-separated prefixes, `*` = every branch).
+
 ## Who gets the email
 
-For each repository, the first source that gives an answer wins:
+Every email goes to all the tech leads listed in the variable `ALERT_EMAILS` (one email per run, all
+of them in "To"). While testing, `REDIRECT_EMAILS_TO` sends every email to one address instead, with a
+note naming the intended recipients.
 
-1. `CODEOWNERS` on the default branch (`CODEOWNERS`, `.github/`, `docs/`). Write emails directly
-   (`* firstname.lastname@company`) or `@username`. `@org/team` entries are not expanded yet.
-2. People given **admin** or **maintain** rights directly on the repository (team access is not expanded yet).
-3. The most active committer of the last 90 days. The email asks them to add a `CODEOWNERS` file.
-4. `FALLBACK_EMAIL`, if set.
-
-GitHub usernames become work emails through, in order: the public profile email,
-[`config/user-emails.json`](config/user-emails.json) (username → work email), then the email in their commits.
-Commits made with a private GitHub email (`…@users.noreply.github.com`) need the `user-emails.json` entry.
-
-**The simplest setup is a one-line `CODEOWNERS` file with an email in each repo.**
+The email is HTML (with a plain-text copy): coloured counts per severity at the top, then every issue,
+critical first, with links to the commit, to the changes since the last scan and to each file and line.
 
 ## When emails are sent
 
 | Run | Schedule | Emails |
 |---|---|---|
-| scan | hourly | new **critical** findings, immediately |
-| full | nightly | same as scan, but rescans every branch (picks up allowlist changes) |
-| digest | Monday 07:00 UTC | every open finding per owner, plus what was fixed |
+| scan | hourly | every **new** finding (all severities), in one email; nothing when there is nothing new |
+| full | nightly | same as scan, but rescans every `dev/` branch (picks up allowlist changes) |
+| digest | Monday 07:00 UTC | every open finding, plus what was fixed |
 | inventory | manual | none: lists every `NEXT_PUBLIC_` name and every API endpoint with its kind and access (job summary, `out/*.csv` locally), to build the allowlists |
 
 ## Testing
@@ -78,9 +79,9 @@ Step-by-step test on a personal GitHub account, with a sample repo full of plant
 ```sh
 npm ci --ignore-scripts
 npm test                                    # unit + end-to-end tests on a generated repo
-node test/make-fixture.mjs ./tmp-fixture    # repo with planted issues on 3 branches
+node test/make-fixture.mjs ./tmp-fixture    # repo with planted issues: 2 dev/ branches, 2 ignored
 node src/index.mjs --local ./tmp-fixture --dry-run --state ./tmp-state.json
-# emails are written to out/emails/ instead of being sent
+# emails are written to out/emails/ (.txt and .html: open the .html in a browser) instead of being sent
 ```
 
 gitleaks must be on the PATH (or set `GITLEAKS_BIN`), otherwise the secret scan is skipped with a warning.
@@ -121,9 +122,9 @@ are scanned too, so `git fetch --all` first).
    | `GMAIL_REFRESH_TOKEN` | secret | printed by `npm run gmail-auth` |
    | `MAIL_FROM` | variable | `AITM Security Agent <support@aitomarketgroup.com>` |
    | `MAIL_REPLY_TO` | variable | optional: where replies go, instead of the support inbox |
-   | `ALLOWED_EMAIL_DOMAINS` | variable | company domain(s): alerts never go to personal addresses |
-   | `FALLBACK_EMAIL` | variable | who gets alerts for repos without an owner |
-   | `REDIRECT_EMAILS_TO` | variable | pilot: every email goes to this address, with the intended recipient noted |
+   | `ALERT_EMAILS` | variable | the tech leads' emails, comma-separated: every alert goes to all of them |
+   | `REDIRECT_EMAILS_TO` | variable | pilot: every email goes to this address, with the intended recipients noted |
+   | `SCAN_BRANCH_PREFIXES` | variable | optional: branches in scope, default `dev/` (`*` = all) |
    | `SEND_EMAILS` | variable | `true` to send; anything else is a dry run |
    | `REPOS` | variable | optional: comma-separated repos to limit the scan (pilot) |
    | `EXCLUDE_REPOS` | variable | optional: repos never to scan |
@@ -135,37 +136,37 @@ are scanned too, so `git fetch --all` first).
       endpoint list with Khushi and the tech leads, update both config files by pull request.
    2. Pilot: `REPOS` = a test repo with planted issues, `REDIRECT_EMAILS_TO` = you, `SEND_EMAILS=true`.
    3. Remove `REPOS` (all repos), keep the redirect for a few days to check the noise.
-   4. Remove `REDIRECT_EMAILS_TO`: owners get their alerts.
+   4. Set `ALERT_EMAILS` to the tech leads and remove `REDIRECT_EMAILS_TO`.
 
 ## How it works
 
 ```
-GitHub API: org repos + branch tips
-   │ only repos whose branch tips changed since the last run
+GitHub API: org repos + branch tips, keeping only dev/ branches
+   │ only repos whose dev/ branch tips changed since the last run
    ▼
-bare clone/fetch (token passed through git's env config, never in the URL)
+bare fetch of the dev/ branches only (token passed through git's env config, never in the URL)
    │
    ├─ per changed branch: git grep / ls-tree / cat-file on the tip commit  (src/checks/branch.mjs,
    │                      API endpoints in src/checks/endpoints.mjs)
-   └─ per repo: .env files in history + gitleaks over all commits           (src/checks/history.mjs)
+   └─ per repo: .env files in history + gitleaks over the dev/ branches' commits (src/checks/history.mjs)
    ▼
 findings with fingerprints, saved between runs in the Actions cache          (src/state.mjs)
    ▼
-owner lookup (src/owners.mjs) → one email per person (src/notify.mjs, sent by src/mailer.mjs)
+one HTML email to the tech leads (src/notify.mjs, sent by src/mailer.mjs)
 ```
 
 Repository sources live in `src/sources/` (`github.mjs`, `gitlab.mjs`), selected with `SOURCE`.
 
 The saved state lives in the GitHub Actions cache. If it is lost (unused for 7 days, or evicted), the
-next run rescans everything and re-sends the critical alerts once. Job logs only show counts, because
+next run rescans everything and re-sends the open issues once. Job logs only show counts, because
 they are visible to anyone with access to this repository.
 
 ## Known limits of the prototype
 
-- `@org/team` in `CODEOWNERS` and team-based repo access are not expanded to people.
 - Only the root `.gitignore` is checked (monorepos with per-app `.gitignore` may get a false alert).
 - `NEXT_PUBLIC_` values are only checked when committed; values stored in Vercel are not checked.
-- Hourly polling of the GitHub API: a new issue is found within the hour, not at push time. Scanning on
+- Hourly polling of the GitHub API: a new issue is found within the hour, not at push time; the "changes"
+  link covers everything pushed since the last scan. Scanning on
   every push is planned for later (GitHub App webhook, so no file is needed in each repo).
 - Endpoint checks are text heuristics: custom login helpers, wrappers or URLs built at runtime need
   `config/endpoints.json` entries. Whether a container is itself reachable from the internet is not checked

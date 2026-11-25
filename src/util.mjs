@@ -60,3 +60,13 @@ export const DEADLINE = {
   review: "decide: add it to the approved list, or move it to the server",
 };
 export const bySeverity = (a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity);
+
+/**
+ * Which branches are in scope. Prefixes are matched case-insensitively ("dev/" matches dev/chat and Dev/Chat).
+ * "*" (or no prefix at all) means every branch.
+ */
+export function branchFilter(prefixes = ["dev/"]) {
+  const list = prefixes.map((p) => p.trim().toLowerCase()).filter(Boolean);
+  if (!list.length || list.includes("*")) return () => true;
+  return (name) => list.some((p) => name.toLowerCase().startsWith(p));
+}
