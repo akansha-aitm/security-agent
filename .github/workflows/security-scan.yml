@@ -2,8 +2,7 @@ name: security-scan
 
 on:
   schedule:
-    - cron: "17 * * * *" # every hour: scan dev/ branches that changed, email every new finding to the tech leads
-    - cron: "0 2 * * *" # every night: full rescan of dev/ branches (picks up allowlist and rule changes)
+    - cron: "0 2 * * *" # every night: rescan every dev/ branch, email every new finding to the tech leads
     - cron: "0 7 * * 1" # Monday 07:00 UTC: weekly digest to the tech leads
   workflow_dispatch:
     inputs:

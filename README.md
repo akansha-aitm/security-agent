@@ -85,8 +85,8 @@ critical first, with links to the commit, to the changes since the last scan and
 
 | Run | Schedule | Emails |
 |---|---|---|
-| scan | hourly | every **new** finding (all severities), in one email; nothing when there is nothing new |
-| full | nightly | same as scan, but rescans every `dev/` branch (picks up allowlist changes) |
+| scan | manual | every **new** finding (all severities), in one email; scans only branches changed since the last run |
+| full | nightly (02:00 UTC) | every **new** finding (all severities), in one email; rescans every `dev/` branch (picks up rule and allowlist changes); nothing when there is nothing new |
 | digest | Monday 07:00 UTC | every open finding, plus what was fixed |
 | inventory | manual | none: lists every `NEXT_PUBLIC_` name and every API endpoint with its kind and access (job summary, `out/*.csv` locally), to build the allowlists |
 
@@ -149,7 +149,7 @@ are scanned too, so `git fetch --all` first).
    | `REPOS` | variable | optional: comma-separated repos to limit the scan (pilot) |
    | `EXCLUDE_REPOS` | variable | optional: repos never to scan |
    | `SCAN_GITHUB_OWNER` | variable | optional: organisation or account to scan, defaults to the owner of the agent's repo |
-   | `ENABLE_SCHEDULE` | variable | `true` turns on the hourly/nightly/weekly runs (otherwise manual runs only) |
+   | `ENABLE_SCHEDULE` | variable | `true` turns on the nightly and weekly runs (otherwise manual runs only) |
 
 5. **Roll out in steps.**
    1. Run *inventory* by hand (Actions > security-scan > Run workflow), review the `NEXT_PUBLIC_` list and the
@@ -185,7 +185,7 @@ they are visible to anyone with access to this repository.
 
 - Only the root `.gitignore` is checked (monorepos with per-app `.gitignore` may get a false alert).
 - `NEXT_PUBLIC_` values are only checked when committed; values stored in Vercel are not checked.
-- Hourly polling of the GitHub API: a new issue is found within the hour, not at push time; the "changes"
+- Nightly polling of the GitHub API: a new issue is found the next night, not at push time; the "changes"
   link covers everything pushed since the last scan. Scanning on
   every push is planned for later (GitHub App webhook, so no file is needed in each repo).
 - Endpoint checks are text heuristics: custom login helpers, wrappers or URLs built at runtime need
