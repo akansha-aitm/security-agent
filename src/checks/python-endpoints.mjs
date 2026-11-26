@@ -4,6 +4,7 @@
 // Reads files through git only: nothing is imported, installed or run.
 import { posix } from "node:path";
 import { git } from "../util.mjs";
+import { checksMicrosoftLogin } from "./sso.mjs";
 
 const SKIP_DIR_RE = /(^|\/)(\.?venv|env|site-packages|__pycache__|node_modules|tests?|\.tox|build|dist)\//;
 const TEST_FILE_RE = /(^|\/)(test_[^/]*|[^/]*_test|conftest)\.py$/;
@@ -238,7 +239,7 @@ export function findPythonEndpoints(dir, sha, files, { authNames = [] } = {}) {
     return cache.get(p);
   };
   const pyFiles = files.filter((f) => f.endsWith(".py") && !SKIP_DIR_RE.test(f) && !TEST_FILE_RE.test(f));
-  const candidates = pyFiles.filter((f) => FRAMEWORK_RE.test(read(f)));
+  const candidates = pyFiles.filter((f) => FRAMEWORK_RE.test(read(f)) || /\bFastMCP\s*\(/.test(read(f)));
   if (!candidates.length) return [];
 
   const words = authNames.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") || "$^";
@@ -295,10 +296,24 @@ export function findPythonEndpoints(dir, sha, files, { authNames = [] } = {}) {
       for (const m of d.text.matchAll(/@\s*([A-Za-z_]\w*)\.before_(?:app_)?request\b/g))
         if (authRe.test(d.text.replace(/@[^\n]*\n/g, "")) || /\babort\(\s*40[13]\b/.test(d.text)) beforeAuth.add(m[1]);
 
+    // Microsoft SSO helpers: names imported from a local module, or defined here, whose code checks the
+    // caller's Microsoft token (or the App Service sign-in headers). Using one counts as a login check.
+    const ssoNames = [];
+    for (const [alias, imp] of imports) {
+      const local = resolveModule(imp, path, fileSet);
+      if (local && checksMicrosoftLogin(read(local))) ssoNames.push(alias);
+    }
+    for (const d of defs) if (d.indent === 0 && checksMicrosoftLogin(d.text)) ssoNames.push(d.name);
+    const ssoRe = ssoNames.length
+      ? new RegExp(`@\\s*(?:${ssoNames.join("|")})\\b|\\b(?:Depends|Security)\\(\\s*(?:${ssoNames.join("|")})\\b|(?<![.\\w])(?:${ssoNames.join("|")})(?:\\.\\w+)*\\s*\\(`)
+      : null;
+
     const fileAuthed = authedModules.has(posix.basename(path, ".py"));
     const add = (ep) => {
       const src = sourceFor(ep.handlerText ?? "", ep.handlerName);
-      endpoints.push({ ...ep, path, ...src, hasAuth: authRe.test(src.own) });
+      const known = authRe.test(src.own);
+      const sso = !known && (checksMicrosoftLogin(src.own) || Boolean(ssoRe?.test(src.own)));
+      endpoints.push({ ...ep, path, ...src, hasAuth: known || sso, authLabel: sso ? "login check (Microsoft SSO)" : null });
     };
 
     // What the handler runs, like the JavaScript check reads a route file and its imports: the
@@ -450,6 +465,29 @@ export function findPythonEndpoints(dir, sha, files, { authNames = [] } = {}) {
         if (objName && beforeAuth.has(objName)) access.routerAuth = "login check (before_request)";
         add({ kind: obj?.kind ?? kind, route, methods, line: lineAt(text, m.index), ...handlerByName(handlerExpr), ...access });
       }
+    }
+
+    // 3. MCP servers over HTTP (FastMCP): one endpoint reaches every tool in the file. A server run
+    //    over stdio is local only and is not an endpoint.
+    for (const m of text.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:[\w.]+\.)?FastMCP\s*\(/gm)) {
+      const name = m[1];
+      const ctorArgs = balanced(text, m.index + m[0].length - 1);
+      const transport = new RegExp(`\\b${name}\\.run\\s*\\(([^)]*)\\)`).exec(text)?.[1].match(/transport\s*=\s*["']([\w-]+)["']/)?.[1];
+      const appCall = new RegExp(`\\b${name}\\.(streamable_http_app|http_app|sse_app)\\s*\\(`).exec(text);
+      if (!appCall && !/http|sse/.test(transport ?? "")) continue;
+      const sse = appCall ? appCall[1] === "sse_app" : transport === "sse";
+      const mount = appCall ? new RegExp(`\\.mount\\(\\s*["']([^"']*)["']\\s*,\\s*${name}\\.`).exec(text)?.[1] : null;
+      const auth = /\b(?:auth|token_verifier|auth_server_provider)\s*=\s*(?!None\b)\w/.test(ctorArgs);
+      endpoints.push({
+        kind: "mcp",
+        route: joinRoute(mount ?? "", sse ? "sse" : "mcp"),
+        methods: ["ANY"],
+        line: lineAt(text, m.index),
+        path,
+        ...sourceFor(text, null),
+        hasAuth: auth,
+        authLabel: auth ? "login check (MCP auth)" : null,
+      });
     }
 
     // Flask/Quart: an app-level before_request check covers the blueprints too.

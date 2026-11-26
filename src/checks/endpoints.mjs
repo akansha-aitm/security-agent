@@ -7,6 +7,8 @@ import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { git } from "../util.mjs";
 import { findPythonEndpoints } from "./python-endpoints.mjs";
+import { checksMicrosoftLogin, platformLogin } from "./sso.mjs";
+import { findJsServerEndpoints } from "./js-servers.mjs";
 
 const DEFAULT_CONFIG = fileURLToPath(new URL("../../config/endpoints.json", import.meta.url));
 const CODE_EXT = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
@@ -84,6 +86,22 @@ export function endpointOfFile(path) {
   return null;
 }
 
+/**
+ * Vercel functions: <project>/api/<path>.ts in a project that is not Next.js (Next.js uses its own
+ * routes). `projects` = folders holding a package.json or vercel.json and no next.config.
+ */
+export function vercelFunctionOf(path, projects) {
+  if (!CODE_RE.test(path) || SKIP_DIR_RE.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/.test(path)) return null;
+  const parts = path.split("/");
+  const apiIdx = parts.indexOf("api");
+  if (apiIdx < 0 || !projects.has(parts.slice(0, apiIdx).join("/"))) return null;
+  const segs = parts.slice(apiIdx + 1);
+  if (segs.some((s) => s.startsWith("_") || s.startsWith("."))) return null; // helpers, not routed
+  segs[segs.length - 1] = segs.at(-1).replace(CODE_RE, "");
+  if (segs.at(-1) === "index") segs.pop();
+  return { kind: "vercel", route: "/" + ["api", ...segs].join("/"), root: parts.slice(0, apiIdx).join("/") };
+}
+
 function rootOf(parts, idx) {
   const before = parts.slice(0, idx);
   if (before.at(-1) === "src") before.pop();
@@ -97,6 +115,7 @@ function readWithHelpers(dir, sha, files, path, root) {
   const seen = new Set([path]);
   const packages = new Set();
   const helperTexts = [];
+  const direct = []; // { spec, text } of the local files the route imports itself
   let frontier = [{ path, text: own }];
   for (let depth = 0; depth < 2 && frontier.length; depth++) {
     const next = [];
@@ -108,13 +127,34 @@ function readWithHelpers(dir, sha, files, path, root) {
           seen.add(local);
           const t = read(local);
           helperTexts.push(t);
+          if (depth === 0) direct.push({ spec, text: t });
           next.push({ path: local, text: t });
         }
       }
     }
     frontier = next;
   }
-  return { own, helpers: helperTexts.join("\n"), packages };
+  return { own, helpers: helperTexts.join("\n"), packages, direct };
+}
+
+/** Names a file imports from one module: import a, { b, c as d } from "m"; import * as ns from "m" (ns.x). */
+function namesImportedFrom(text, spec) {
+  const esc = spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const names = [];
+  for (const m of text.matchAll(new RegExp(`import\\s+([^;]*?)\\s+from\\s*["']${esc}["']`, "g"))) {
+    const clause = m[1];
+    const ns = clause.match(/\*\s+as\s+(\w+)/);
+    if (ns) names.push(`${ns[1]}\\.\\w+`);
+    const braces = clause.match(/\{([^}]*)\}/);
+    if (braces)
+      for (const part of braces[1].split(",")) {
+        const n = part.trim().split(/\s+as\s+/).pop();
+        if (/^\w+$/.test(n ?? "")) names.push(n);
+      }
+    const def = clause.replace(/\{[^}]*\}|\*\s+as\s+\w+/g, "").split(",")[0].trim();
+    if (/^\w+$/.test(def)) names.push(def);
+  }
+  return names;
 }
 
 function importsOf(text) {
@@ -180,6 +220,11 @@ function categorize({ own, helpers, packages, lang }, r) {
 
 function methodsOf(own, kind) {
   if (kind === "edge") return ["ANY"];
+  if (kind === "vercel") {
+    // Web-standard named exports (export function GET), else one default handler for every method.
+    const named = methodsOf(own, "app");
+    return named.length ? named : ["ANY"];
+  }
   if (kind === "pages") {
     const m = [...own.matchAll(new RegExp(`method\\s*[!=]==?\\s*["'](${METHODS})["']`, "g"))].map((x) => x[1]);
     return m.length ? [...new Set(m)] : ["ANY"];
@@ -188,7 +233,11 @@ function methodsOf(own, kind) {
     `export\\s+(?:async\\s+)?function\\s+(${METHODS})\\b|export\\s+(?:const|let|var)\\s+(${METHODS})\\b|\\bas\\s+(${METHODS})\\b`,
     "g",
   );
-  return [...new Set([...own.matchAll(re)].map((m) => m[1] ?? m[2] ?? m[3]))];
+  const found = [...own.matchAll(re)].map((m) => m[1] ?? m[2] ?? m[3]);
+  // export const { GET, POST } = serve(...) (Inngest and other route helpers)
+  for (const m of own.matchAll(/export\s+const\s*\{([^}]*)\}\s*=/g))
+    for (const n of m[1].split(",")) if (new RegExp(`^(?:${METHODS})$`).test(n.trim())) found.push(n.trim());
+  return [...new Set(found)];
 }
 
 function lineOf(text, re) {
@@ -286,6 +335,21 @@ const ADVICE = {
     timeout: "If the other service hangs, this endpoint hangs too and keeps consuming resources. Pass timeout=10 to every requests/httpx call (requests has no timeout by default).",
   },
 };
+// MCP servers over HTTP: anyone who reaches them can list and run their tools.
+const MCP_RE = /\bMcpServer\b|\bcreateMcpHandler\s*\(|StreamableHTTPServerTransport|SSEServerTransport|\bFastMCP\s*\(/;
+const MCP_PACKAGE_RE = /^(?:@modelcontextprotocol\/sdk|mcp-handler|@vercel\/mcp-adapter|mcp\.server|fastmcp)(?:[./]|$)/;
+const MCP_ADVICE =
+  "Anyone can list and run its tools, with our keys and our data. Require a token before the MCP server answers " +
+  "(requireBearerAuth in the MCP SDK, withMcpAuth in mcp-handler, auth= in FastMCP) and refuse with 401 otherwise.";
+
+/** Background-job services that sign their calls to the endpoint, so it is not open to anyone. */
+function jobService(text) {
+  if (/(?:^|[\s"'])inngest(?:\/[\w-]+)?(?=["'\s]|$)/m.test(text) && /\bserve\s*\(/.test(text)) return "Inngest (signing key)";
+  if (/@trigger\.dev\/(?:nextjs|express)/.test(text) && /\bcreate(?:App|Pages)Route\s*\(/.test(text)) return "Trigger.dev (API key)";
+  if (/qstash/i.test(text) && /\bverifySignature(?:AppRouter|Edge)?\s*\(|\bReceiver\s*\(|\.verify\s*\(/.test(text)) return "QStash signature";
+  return null;
+}
+
 const CONFIG_ADVICE =
   " If this endpoint must be public, add it to publicRoutes in the agent's config/endpoints.json (a written decision). If it already uses a helper with another name, add that name to authHelpers.";
 
@@ -321,12 +385,24 @@ export function runEndpointChecks(dir, sha, files, config, { repo, onEndpoint } 
     }
   }
   const vercelJson = files.includes("vercel.json") ? read("vercel.json") : "";
+  const platform = platformLogin(dir, sha, files); // sign-in switched on in the deploy files
   const cronPaths = new Set([...vercelJson.matchAll(/"path"\s*:\s*"([^"?]+)/g)].map((m) => m[1]));
 
-  // JavaScript endpoints: found from the file layout.
+  // JavaScript servers with routes declared in code (Express, Fastify, Hono, Koa, NestJS, Azure Functions).
+  const serverEndpoints = findJsServerEndpoints(dir, sha, files, { authNames: r.authHelpers });
+  const serverFiles = new Set(serverEndpoints.map((ep) => ep.path));
+
+  // JavaScript endpoints: found from the file layout. A route file that only hands requests to a
+  // server above (Hono's handle(app) in app/api/[[...route]]/route.ts) is reported route by route.
+  const dirOf = (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "");
+  const nextProjects = new Set(files.filter((f) => /(^|\/)next\.config\.[cm]?[jt]s$/.test(f)).map(dirOf));
+  const projects = new Set(
+    files.filter((f) => /(^|\/)(package|vercel)\.json$/.test(f) && !SKIP_DIR_RE.test(f)).map(dirOf).filter((d) => !nextProjects.has(d)),
+  );
   const endpoints = [];
   for (const path of files) {
-    const ep = endpointOfFile(path);
+    if (serverFiles.has(path)) continue;
+    const ep = endpointOfFile(path) ?? vercelFunctionOf(path, projects);
     if (ep) endpoints.push({ ...ep, path });
     else if (actionFiles.has(path)) endpoints.push({ kind: "action", route: `server actions in ${path}`, root: rootGuess(path), path });
   }
@@ -351,11 +427,39 @@ export function runEndpointChecks(dir, sha, files, config, { repo, onEndpoint } 
       own,
       helpers,
       packages: src.packages,
-      hasAuth: r.authRe.test(own),
+      ...loginOf(own, src.direct),
       platformAuth,
       noAuthTitle: ep.kind === "edge" ? "Supabase function with the token check switched off (verify_jwt = false) and no login check" : null,
       isCron: /\/cron(\/|$)/.test(ep.route) || cronPaths.has(ep.route),
     });
+  }
+
+  for (const ep of serverEndpoints)
+    evaluate({
+      lang: "js",
+      kind: ep.kind,
+      route: ep.route,
+      label: `${ep.methods.join(",")} ${ep.route}`,
+      path: ep.path,
+      line: ep.line,
+      methods: ep.methods,
+      own: ep.own,
+      helpers: ep.helpers,
+      packages: ep.packages,
+      hasAuth: ep.hasAuth,
+      authLabel: ep.authLabel,
+      platformAuth: ep.platformAuth ?? null,
+      noAuthTitle: ep.anonymousFunction ? "Azure function with authLevel anonymous and no login check" : null,
+      isCron: /\/cron(\/|$)/.test(ep.route),
+    });
+
+  /** Login check in a JavaScript route: a known helper, or Microsoft SSO in the route or in a helper it calls. */
+  function loginOf(own, direct) {
+    if (r.authRe.test(own)) return { hasAuth: true };
+    const viaHelper = direct.some(
+      ({ spec, text }) => checksMicrosoftLogin(stripComments(text)) && namesImportedFrom(own, spec).some((n) => new RegExp(`\\b${n}\\s*\\(`).test(own)),
+    );
+    return checksMicrosoftLogin(own) || viaHelper ? { hasAuth: true, authLabel: "login check (Microsoft SSO)" } : { hasAuth: false };
   }
 
   // Python endpoints: declared in the code (@app.post("/x"), app.router.add_post(...)).
@@ -374,6 +478,7 @@ export function runEndpointChecks(dir, sha, files, config, { repo, onEndpoint } 
       helpers: ep.helpers,
       packages: ep.packages,
       hasAuth: ep.hasAuth,
+      authLabel: ep.authLabel,
       platformAuth,
       noAuthTitle: ep.anonymousFunction ? "Azure function with auth_level ANONYMOUS and no login check" : null,
       isCron: /\/cron(\/|$)/.test(ep.route),
@@ -391,7 +496,13 @@ export function runEndpointChecks(dir, sha, files, config, { repo, onEndpoint } 
     const isCron = ep.isCron;
     const isWebhook = /webhook/i.test(ep.route);
     const hasAuth = ep.hasAuth;
-    const access = isPublic ? "public (approved)" : isCron ? "cron" : isWebhook ? "webhook" : hasAuth ? "login check" : ep.platformAuth ?? "none found";
+    // Background-job services sign every call they make to the endpoint (Inngest, Trigger.dev, QStash).
+    const job = jobService(`${own}\n${[...ep.packages].join("\n")}`);
+    if (!hasAuth && !ep.platformAuth && job) ep.platformAuth = job;
+    // Sign-in switched on for the whole app in its deploy files covers what the code does not.
+    if (!hasAuth && !ep.platformAuth && platform && !platform.excluded(ep.route)) ep.platformAuth = platform.label;
+    const isMcp = MCP_RE.test(own) || [...ep.packages].some((p) => MCP_PACKAGE_RE.test(p));
+    const access = isPublic ? "public (approved)" : isCron ? "cron" : isWebhook ? "webhook" : hasAuth ? (ep.authLabel ?? "login check") : ep.platformAuth ?? "none found";
     const loc = `${ep.path}:${ep.line}`;
     const catText = [...cats].map((c) => CATEGORY_LABEL[c]).join(" + ");
     const found = [];
@@ -400,8 +511,11 @@ export function runEndpointChecks(dir, sha, files, config, { repo, onEndpoint } 
 
     // 1. Login check (cron routes and webhooks authenticate differently, checked below)
     if (!isPublic && !isCron && !isWebhook && !hasAuth && !ep.platformAuth) {
-      const critical = cats.has("llm") || X.adminKey.test(all);
-      add("no-auth", critical ? "critical" : "high", ep.noAuthTitle ?? "No login check found in this endpoint", advice.noAuth + CONFIG_ADVICE);
+      if (isMcp) add("no-auth", "critical", "MCP server endpoint with no login check", MCP_ADVICE + CONFIG_ADVICE);
+      else {
+        const critical = cats.has("llm") || X.adminKey.test(all);
+        add("no-auth", critical ? "critical" : "high", ep.noAuthTitle ?? "No login check found in this endpoint", advice.noAuth + CONFIG_ADVICE);
+      }
     }
     // 2. Cron routes need the secret, webhooks need a signature check
     if (isCron && !X.cronSecret.test(all)) add("cron-secret", "high", "Cron route without a CRON_SECRET check", advice.cron);

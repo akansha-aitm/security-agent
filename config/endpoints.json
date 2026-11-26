@@ -5,11 +5,10 @@
   "publicRoutes": ["/api/health", "/health", "/healthz", "/auth/callback", "/auth/confirm", "/api/auth/[...nextauth]"],
 
   "_authHelpers": "Function names that count as a login check when the route calls them (Python: also as a decorator or in Depends()/Security()). Add each project's own helpers (e.g. requireUser). getSession() does NOT count on the server: it does not verify the token. FastAPI security schemes (OAuth2PasswordBearer, HTTPBearer, APIKeyHeader...) are recognised without being listed.",
-  "authHelpers": ["getUser", "getClaims", "auth", "currentUser", "getServerSession", "requireUser", "requireAuth", "requireSession", "withAuth", "verifyAuth", "validateRequest", "getAuthenticatedUser",
-    "login_required", "jwt_required", "fresh_jwt_required", "verify_jwt_in_request", "auth_required", "token_required", "requires_auth", "require_auth", "require_user", "require_login", "permission_required", "roles_required", "get_current_user", "get_current_active_user", "verify_token", "verify_api_key", "verify_jwt"],
+  "authHelpers": ["getUser", "getClaims", "auth", "currentUser", "getServerSession", "requireUser", "requireAuth", "requireSession", "withAuth", "verifyAuth", "validateRequest", "getAuthenticatedUser", "login_required", "jwt_required", "fresh_jwt_required", "verify_jwt_in_request", "auth_required", "token_required", "requires_auth", "require_auth", "require_user", "require_login", "permission_required", "roles_required", "get_current_user", "get_current_active_user", "verify_token", "verify_api_key", "verify_jwt", "authenticate", "isAuthenticated", "ensureAuthenticated", "ensureLoggedIn", "verifyToken", "verifyJwt", "expressjwt", "checkJwt", "requiresAuth", "clerkMiddleware", "bearerAuth", "basicAuth", "jwt", "requireBearerAuth", "withMcpAuth"],
 
   "_rateLimitHelpers": "Names that count as a rate limit (Upstash Ratelimit and common helper names are also recognised).",
-  "rateLimitHelpers": ["ratelimit", "rateLimit", "checkRateLimit", "limiter", "enforceQuota", "checkQuota", "slowapi", "flask_limiter", "RateLimiter", "check_rate_limit", "rate_limit"],
+  "rateLimitHelpers": ["ratelimit", "rateLimit", "checkRateLimit", "limiter", "enforceQuota", "checkQuota", "slowapi", "flask_limiter", "RateLimiter", "check_rate_limit", "rate_limit", "rateLimiter", "Throttle", "ThrottlerGuard", "slowDown"],
 
   "llm": {
     "_pythonPackages": "Python modules (and submodules) that mark an endpoint as calling an LLM.",

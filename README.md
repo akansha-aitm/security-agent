@@ -24,11 +24,17 @@ in an email, a log or its saved state. Rules come from the `ai-to-market-securit
 
 Every endpoint is found and sorted by what it calls, reading the route and the local code it uses:
 
-- **JavaScript** (from the file layout): `app/**/route.ts`, `pages/api/**`, `"use server"` files, `supabase/functions/*`.
+- **JavaScript** (from the file layout): `app/**/route.ts`, `pages/api/**`, `"use server"` files, `supabase/functions/*`,
+  and Vercel functions in `api/` of a project that is not Next.js.
+- **JavaScript servers** (from the code): Express, Fastify, Hono, Koa (`app.get("/x", ...)`, `fastify.route({...})`),
+  NestJS (`@Controller` + `@Get`) and Azure Functions (v4 `app.http(...)`, v3 `function.json`). A Next.js catch-all
+  route that hands requests to Hono is reported route by route.
 - **Python** (from the code, in `.py` files outside `tests/`): Flask, Quart and Sanic (`@app.route`, `@bp.get`,
   `add_url_rule`), FastAPI and Starlette (`@router.post`, `add_api_route`, `Route`), aiohttp
   (`@routes.get`, `app.router.add_post`) and Azure Functions (`@app.route(route=...)`). As for JavaScript, the
   agent reads the handler, the same-file code it uses and the local modules it imports (two levels).
+- **MCP servers over HTTP**: the MCP SDK and `mcp-handler` routes, and Python FastMCP run over HTTP
+  (`transport="streamable-http"`, `streamable_http_app()`); a server run over stdio is local and not an endpoint.
 
 Categories:
 **LLM** (AI libraries or AI hosts), **third-party** (Stripe, SerpApi, Resend... or any outside URL),
@@ -45,6 +51,10 @@ names, URL settings, with per-repo additions.
 | container | sends a service credential, never the user's headers |
 | Supabase function | `verify_jwt = false` without a login check |
 | Python | login decorators, `Depends(...)`/`Security(...)` (FastAPI security schemes included), router `dependencies=`, Flask `before_request`, aiohttp auth middlewares and the Bot Framework adapter (Teams bots) count as a login check; Azure Functions: `auth_level=ANONYMOUS` without a login check (function keys count as a check) |
+| JS servers | middleware passed to the route or applied before it (`app.use(auth)`, `app.use("/admin", ...)`, Fastify `preHandler`/`onRequest` hooks), NestJS `@UseGuards` on the method or class and a global `APP_GUARD` (except `@Public()` methods) count as a login check; Azure Functions: `authLevel: "anonymous"` (the v4 default) without a login check |
+| MCP server | no login check is critical: anyone can list and run its tools. `requireBearerAuth`, `withMcpAuth` and FastMCP `auth=` / `token_verifier=` count as a check |
+| Background jobs | Inngest `serve()`, Trigger.dev routes and QStash's signature check (`verifySignatureAppRouter`, `Receiver`) count as protected: the service signs every call |
+| Single sign-on (JS and Python) | counts as a login check: **Microsoft Entra ID** (Microsoft / Azure SSO) when the route, or a local helper it calls, checks the caller's token against Microsoft's keys (`jwt.decode`/`PyJWKClient`, `jose` `jwtVerify`) or uses `fastapi-azure-auth` / `passport-azure-ad`; **Teams** bots validating the Bot Framework token (`JwtTokenValidation`); **Azure App Service sign-in** when the code reads `X-MS-CLIENT-PRINCIPAL` or the deploy files switch it on (`az webapp auth update`, `authsettingsV2`), except its excluded paths; **Snowflake**'s login in front of Snowpark Container Services public endpoints (service spec). Getting a token for outgoing calls (`msal` client credentials) does not count |
 
 These read the source text: "no login check found" means a person should look. A project's own login
 helper (e.g. `requireUser()`, `check_caller()`) must be added to `authHelpers`, or its routes are reported.
@@ -180,5 +190,11 @@ they are visible to anyone with access to this repository.
 - Endpoint checks are text heuristics: custom login helpers, wrappers or URLs built at runtime need
   `config/endpoints.json` entries. Whether a container is itself reachable from the internet is not checked
   (cloud setting, outside the repo). Object ownership ("is this the user's own record?") is not checked.
-  Django URL confs are not read yet, and a login check added by the hosting platform (Azure App Service
-  authentication, an API gateway) is invisible in the code: those endpoints are reported and need a person.
+  Django URL confs are not read yet, nor are routes added by a server mounted from another file (their
+  prefix is missing) or chained Hono calls (`app.get(...).post(...)`: only the first is found). Supabase RPC/RLS,
+  GraphQL/tRPC operations and webhooks set up in n8n, Zapier or Make are not endpoint checks.
+  A login added by the platform only in its portal (Azure App Service
+  sign-in switched on by hand, IP restrictions, an API gateway) is invisible in the repo: those endpoints are
+  reported and need a person. Sign-in found in deploy files applies to the whole repo, so in a repo holding
+  several apps a person should confirm which app it belongs to. Snowflake SSO itself only protects logins
+  to Snowflake; it protects an API only when the API runs inside Snowflake.
