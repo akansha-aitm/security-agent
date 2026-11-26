@@ -350,6 +350,36 @@ function jobService(text) {
   return null;
 }
 
+// Endpoints that change the database structure themselves (code-level migrations). SQL files kept in
+// supabase/ or snowflake/ folders are run by hand and are not checked: only what the app's code runs.
+const DDL_OBJECTS = "TABLE|VIEW|MATERIALIZED\\s+VIEW|FUNCTION|PROCEDURE|SCHEMA|INDEX|POLICY|TRIGGER|EXTENSION|TYPE|SEQUENCE|DATABASE|WAREHOUSE|STAGE|ROLE|USER";
+const DDL_BODY =
+  `(?:CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:UNIQUE\\s+)?(?:${DDL_OBJECTS})|ALTER\\s+(?:${DDL_OBJECTS})|DROP\\s+(?:${DDL_OBJECTS})|TRUNCATE\\s+(?:TABLE\\s+)?[\\w"]` +
+  `|GRANT\\s+[\\w\\s,]+?\\s+ON\\s|REVOKE\\s+[\\w\\s,]+?\\s+ON\\s|(?:DIS|EN)ABLE\\s+ROW\\s+LEVEL\\s+SECURITY)\\b`;
+// Upper-case SQL anywhere, or lower-case SQL at the start of a string (not prose in comments or UI text).
+const MIGRATION_SQL_RE = [new RegExp(`\\b${DDL_BODY}`), new RegExp(`(?:["'\`]|sql\`|text\\(\\s*["'])\\s*${DDL_BODY}`, "i")];
+const MIGRATION_TOOL_RE = new RegExp(
+  [
+    String.raw`(?:drizzle-orm\/[\w-]+\/migrator|drizzle-kit)`, // drizzle migrate()
+    String.raw`\.migrate\.(?:latest|up|down|rollback)\s*\(`, // knex
+    String.raw`\.sync\s*\(\s*\{\s*(?:force|alter)\s*:\s*true`, // sequelize
+    String.raw`\bumzug\b[\s\S]{0,200}\.(?:up|down)\s*\(`,
+    String.raw`\.runMigrations\s*\(|\.synchronize\s*\(\s*(?:true)?\s*\)`, // typeorm
+    String.raw`prisma\s+(?:migrate|db\s+push)`,
+    String.raw`\bcommand\.(?:upgrade|downgrade|stamp)\s*\(`, // alembic
+    String.raw`\.(?:create_all|drop_all)\s*\(`, // SQLAlchemy metadata
+    String.raw`call_command\(\s*["'](?:migrate|flush)["']`, // Django
+    String.raw`\.rpc\(\s*["'](?:exec_sql|execute_sql|run_sql|exec|sql|query)["']`, // Supabase RPC that runs raw SQL
+  ].join("|"),
+);
+const MIGRATION_ROUTE_RE = /(?:^|\/)(?:migrate|migrations?|run-migrations?|setup-db|init-db|db-init|db-setup|setup-database|init-database|reset-db|db-reset|reset-database|seed|seed-db|run-sql|exec-sql|schema-sync|sync-schema)(?:\/|$)/i;
+const ADMIN_CHECK_RE =
+  /\b(?:isAdmin|is_admin|requireAdmin|require_admin|adminOnly|admin_only|admin_required|assertAdmin|ensureAdmin|isSuperuser|is_superuser|is_staff)\b|@Roles\(\s*["']admin|\brole\w*\s*(?:===?|!==?|==|!=)\s*["'](?:admin|owner|super_?admin)["']|["'](?:admin|owner|super_?admin)["']\s*(?:===?|!==?|==|!=|in\b)|\.includes\(\s*["'](?:admin|super_?admin)["']\s*\)/;
+const MIGRATION_ADVICE =
+  "Calling this URL changes the database structure (tables, functions, policies or permissions) or wipes data. " +
+  "Run migrations in a deploy step or by hand, not from an API endpoint. If the endpoint must stay, refuse every caller except admins " +
+  "(check the user and their admin role on the first line), use POST only, and never build the SQL from the request.";
+
 const CONFIG_ADVICE =
   " If this endpoint must be public, add it to publicRoutes in the agent's config/endpoints.json (a written decision). If it already uses a helper with another name, add that name to authHelpers.";
 
@@ -509,8 +539,19 @@ export function runEndpointChecks(dir, sha, files, config, { repo, onEndpoint } 
     const add = (key, severity, title, text) =>
       found.push({ fp: `endpoint|${key}|${ep.label}`, check: "endpoint", severity, location: loc, title: `${title}: ${ep.label} (${catText})`, advice: text });
 
+    // 0. Code-level migrations: the endpoint changes the database structure or wipes data
+    const isMigration =
+      any(MIGRATION_SQL_RE, all) || MIGRATION_TOOL_RE.test(all) || (MIGRATION_ROUTE_RE.test(ep.route) && X.writes.test(all));
+    const openToAll = !isCron && !isWebhook && !hasAuth && !ep.platformAuth; // an approved public route is still open
+    if (isMigration) {
+      if (openToAll) add("migration", "critical", "Endpoint runs database migrations with no login check", MIGRATION_ADVICE);
+      else if (!ADMIN_CHECK_RE.test(all))
+        add("migration", "high", "Endpoint runs database migrations without an admin check", MIGRATION_ADVICE);
+    }
     // 1. Login check (cron routes and webhooks authenticate differently, checked below)
-    if (!isPublic && !isCron && !isWebhook && !hasAuth && !ep.platformAuth) {
+    if (isMigration && openToAll) {
+      // already reported above as a critical migration finding
+    } else if (!isPublic && !isCron && !isWebhook && !hasAuth && !ep.platformAuth) {
       if (isMcp) add("no-auth", "critical", "MCP server endpoint with no login check", MCP_ADVICE + CONFIG_ADVICE);
       else {
         const critical = cats.has("llm") || X.adminKey.test(all);

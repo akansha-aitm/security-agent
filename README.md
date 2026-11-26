@@ -45,6 +45,7 @@ names, URL settings, with per-repo additions.
 | Kind | Checks |
 |---|---|
 | all | login check on the endpoint, unless approved public (critical if it calls an LLM or uses the Supabase secret key); user id/role taken from the request; user-supplied URL fetched (SSRF); keys in logs; GET that changes data |
+| database migrations in code | endpoint that changes the database structure (CREATE/ALTER/DROP/TRUNCATE/GRANT in SQL it runs, Supabase `exec_sql` RPC, drizzle/knex/Sequelize/TypeORM/Prisma/Alembic/SQLAlchemy `create_all`), or a `seed`/`migrate`/`setup-db` route that writes data: critical without a login check (even if approved public), high with a login but no admin check. Temporary tables and stages are ignored |
 | cron / webhook | `CRON_SECRET` check / signature verification instead of a login |
 | LLM | rate limit; model, system prompt or settings taken from the request; input size limit; `maxDuration`; no GET |
 | third-party / container | timeout on outgoing calls |
@@ -191,8 +192,9 @@ they are visible to anyone with access to this repository.
   `config/endpoints.json` entries. Whether a container is itself reachable from the internet is not checked
   (cloud setting, outside the repo). Object ownership ("is this the user's own record?") is not checked.
   Django URL confs are not read yet, nor are routes added by a server mounted from another file (their
-  prefix is missing) or chained Hono calls (`app.get(...).post(...)`: only the first is found). Supabase RPC/RLS,
-  GraphQL/tRPC operations and webhooks set up in n8n, Zapier or Make are not endpoint checks.
+  prefix is missing) or chained Hono calls (`app.get(...).post(...)`: only the first is found). Supabase RLS and
+  RPC permissions, and SQL files in `supabase/` or `snowflake/` folders (run by hand, often out of date) are
+  not checked: only migrations the app code runs. GraphQL/tRPC operations and webhooks set up in n8n, Zapier or Make are not endpoint checks.
   A login added by the platform only in its portal (Azure App Service
   sign-in switched on by hand, IP restrictions, an API gateway) is invisible in the repo: those endpoints are
   reported and need a person. Sign-in found in deploy files applies to the whole repo, so in a repo holding
